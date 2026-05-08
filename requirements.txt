@@ -1,0 +1,10 @@
+Flask
+Flask-SocketIO
+simple-websocket
+python-dotenv
+Werkzeug
+gunicorn
+gevent
+gevent-websocket
+requests
+cryptography

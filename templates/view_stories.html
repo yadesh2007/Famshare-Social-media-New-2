@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ user.username }} Stories</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="story-page-body">
+
+<div class="story-fullscreen-wrap">
+    <div class="story-top-progress">
+        {% for story in stories %}
+            <div class="story-progress-line">
+                <div class="story-progress-fill" id="progress-{{ loop.index0 }}"></div>
+            </div>
+        {% endfor %}
+    </div>
+
+    <div class="story-topbar-full">
+        <div class="story-user-info">
+            <img
+                class="avatar"
+                src="{{ url_for('static', filename='uploads/profiles/' + user.profile_pic) if user.profile_pic != 'default.png' else url_for('static', filename='img/default.png') }}"
+                alt="{{ user.username }} profile"
+            >
+            <div>
+                <strong>{{ user.username }}</strong>
+                <div class="muted">{{ stories|length }} active {{ "story" if stories|length == 1 else "stories" }}</div>
+            </div>
+        </div>
+        <a href="{{ url_for('feed') }}" class="btn small-btn story-close-btn">Close</a>
+    </div>
+
+    <div id="story-container">
+        {% for story in stories %}
+        <div class="story-slide {% if loop.index0 == 0 %}active-story{% endif %}" data-index="{{ loop.index0 }}">
+            <div class="story-content-area">
+                {% if story.media_type == 'image' %}
+                    <img class="story-media-full" src="{{ url_for('static', filename='uploads/posts/' + story.media_file) }}" alt="story image">
+                {% elif story.media_type == 'video' %}
+                    <video class="story-media-full story-video" {% if loop.index0 == 0 %}autoplay{% endif %} muted playsinline controls>
+                        <source src="{{ url_for('static', filename='uploads/posts/' + story.media_file) }}">
+                    </video>
+                {% endif %}
+            </div>
+
+            {% if story.caption %}
+                <div class="story-caption-box">{{ story.caption }}</div>
+            {% endif %}
+
+            {% if current_user_id == user.id %}
+            <div class="story-owner-actions">
+                <a href="{{ url_for('story_views_page', story_id=story.id) }}" class="btn small-btn">
+                    {{ story_views_count.get(story.id, 0) }} Views
+                </a>
+
+                <form method="POST" action="{{ url_for('delete_story', story_id=story.id) }}" onsubmit="return confirm('Delete this story?')">
+                    <button type="submit" class="btn danger small-btn">Delete</button>
+                </form>
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+
+    <button class="story-nav-zone left-zone" type="button" aria-label="Previous story"></button>
+    <button class="story-nav-zone right-zone" type="button" aria-label="Next story"></button>
+</div>
+
+<script>
+    const storySlides = Array.from(document.querySelectorAll(".story-slide"));
+    const progressBars = Array.from(document.querySelectorAll(".story-progress-fill"));
+
+    let currentStory = 0;
+    let storyTimer = null;
+    let progressTimer = null;
+    let startedAt = 0;
+    let activeDuration = 5000;
+
+    function resetTimers() {
+        clearTimeout(storyTimer);
+        clearInterval(progressTimer);
+    }
+
+    function setProgress(index, percent) {
+        if (progressBars[index]) {
+            progressBars[index].style.width = Math.min(percent, 100) + "%";
+        }
+    }
+
+    function resetProgressBars() {
+        progressBars.forEach((bar, index) => {
+            bar.style.width = index < currentStory ? "100%" : "0%";
+        });
+    }
+
+    function pauseAllVideos() {
+        storySlides.forEach((slide) => {
+            const video = slide.querySelector("video");
+            if (video) {
+                video.pause();
+                video.currentTime = 0;
+            }
+        });
+    }
+
+    function startProgress(duration) {
+        activeDuration = duration;
+        startedAt = Date.now();
+        progressTimer = setInterval(() => {
+            const elapsed = Date.now() - startedAt;
+            setProgress(currentStory, (elapsed / activeDuration) * 100);
+        }, 80);
+        storyTimer = setTimeout(nextStory, activeDuration);
+    }
+
+    function showStory(index) {
+        resetTimers();
+        pauseAllVideos();
+
+        if (index < 0) {
+            index = 0;
+        }
+        if (index >= storySlides.length) {
+            window.location.href = "{{ url_for('feed') }}";
+            return;
+        }
+
+        currentStory = index;
+        storySlides.forEach((slide) => slide.classList.remove("active-story"));
+        storySlides[currentStory].classList.add("active-story");
+        resetProgressBars();
+
+        const currentVideo = storySlides[currentStory].querySelector("video");
+        if (currentVideo) {
+            currentVideo.play().catch(() => {});
+            const duration = Number.isFinite(currentVideo.duration) && currentVideo.duration > 0
+                ? currentVideo.duration * 1000
+                : 7000;
+            startProgress(Math.max(duration, 3000));
+            currentVideo.onloadedmetadata = function () {
+                resetTimers();
+                startProgress(Math.max(currentVideo.duration * 1000, 3000));
+                currentVideo.play().catch(() => {});
+            };
+        } else {
+            startProgress(5000);
+        }
+    }
+
+    function nextStory() {
+        showStory(currentStory + 1);
+    }
+
+    function prevStory() {
+        showStory(currentStory - 1);
+    }
+
+    document.querySelector(".left-zone").addEventListener("click", prevStory);
+    document.querySelector(".right-zone").addEventListener("click", nextStory);
+
+    document.addEventListener("keydown", function(event) {
+        if (event.key === "ArrowRight") nextStory();
+        if (event.key === "ArrowLeft") prevStory();
+        if (event.key === "Escape") window.location.href = "{{ url_for('feed') }}";
+    });
+
+    showStory(0);
+</script>
+
+</body>
+</html>
