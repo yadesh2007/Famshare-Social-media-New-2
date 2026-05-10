@@ -569,25 +569,42 @@
         appendMessage(data.sender_id, data.message_text, data.created_at, data.message_id);
     });
 
-    chatForm.addEventListener("submit", function (event) {
+    chatForm.addEventListener("submit", async function (event) {
+        event.preventDefault();
         const text = messageInput.value.trim();
         if (!text) {
-            event.preventDefault();
             return;
         }
 
-        if (!socket.connected) {
+        if (socket.connected) {
+            socket.emit("send_chat_message", {
+                conversation_id: conversationId,
+                message_text: text
+            });
+            messageInput.value = "";
+            messageInput.focus();
             return;
         }
 
-        event.preventDefault();
-        socket.emit("send_chat_message", {
-            conversation_id: conversationId,
-            message_text: text
-        });
-
-        messageInput.value = "";
-        messageInput.focus();
+        try {
+            const response = await fetch(chatForm.action, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "X-Requested-With": "XMLHttpRequest"
+                },
+                body: new URLSearchParams({message_text: text})
+            });
+            const data = await response.json();
+            if (!response.ok || !data.ok) {
+                throw new Error(data.error || "Could not send message.");
+            }
+            appendMessage(currentUserId, text, data.created_at || "Just now", data.message_id);
+            messageInput.value = "";
+            messageInput.focus();
+        } catch (error) {
+            chatStatus.textContent = error.message;
+        }
     });
 
     scrollToBottom();

@@ -68,6 +68,316 @@ window.addEventListener("load", function () {
         });
     }
 
+    function executeInlineScripts(root) {
+        root.querySelectorAll("script").forEach(function (oldScript) {
+            const script = document.createElement("script");
+            Array.from(oldScript.attributes).forEach(function (attr) {
+                script.setAttribute(attr.name, attr.value);
+            });
+            if (oldScript.src) {
+                script.src = oldScript.src;
+                script.async = false;
+            } else {
+                script.textContent = oldScript.textContent;
+            }
+            oldScript.parentNode.replaceChild(script, oldScript);
+        });
+    }
+
+    function bindDynamicPageHandlers(root) {
+        if (!root) {
+            root = document;
+        }
+
+        const profilePhotoInput = root.querySelector("#profile-photo-input");
+        const profilePhotoPreview = root.querySelector("#profile-photo-preview");
+        const removeProfilePhotoBtn = root.querySelector("#remove-profile-photo");
+        const removeProfilePhotoInput = root.querySelector("#remove-profile-photo-input");
+
+        if (profilePhotoInput && profilePhotoPreview && removeProfilePhotoInput && !profilePhotoInput.dataset.ajaxBound) {
+            profilePhotoInput.dataset.ajaxBound = "1";
+            profilePhotoInput.addEventListener("change", function () {
+                const file = profilePhotoInput.files && profilePhotoInput.files[0];
+                removeProfilePhotoInput.value = "0";
+                if (file) {
+                    profilePhotoPreview.src = URL.createObjectURL(file);
+                }
+            });
+        }
+
+        if (removeProfilePhotoBtn && profilePhotoPreview && removeProfilePhotoInput && profilePhotoInput && !removeProfilePhotoBtn.dataset.ajaxBound) {
+            removeProfilePhotoBtn.dataset.ajaxBound = "1";
+            removeProfilePhotoBtn.addEventListener("click", function () {
+                profilePhotoInput.value = "";
+                removeProfilePhotoInput.value = "1";
+                profilePhotoPreview.src = profilePhotoPreview.dataset.defaultSrc;
+            });
+        }
+
+        root.querySelectorAll(".emergency-help-btn").forEach(function (button) {
+            if (button.dataset.ajaxBound) {
+                return;
+            }
+            button.dataset.ajaxBound = "1";
+            button.addEventListener("click", async function () {
+                const alertId = button.dataset.alertId;
+                await fetch(`/emergency/${alertId}/respond`, {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({message: "I can help."})
+                });
+                button.textContent = "Responding";
+                button.disabled = true;
+            });
+        });
+
+        root.querySelectorAll(".emergency-safe-btn").forEach(function (button) {
+            if (button.dataset.ajaxBound) {
+                return;
+            }
+            button.dataset.ajaxBound = "1";
+            button.addEventListener("click", async function () {
+                const alertId = button.dataset.alertId;
+                await fetch(`/emergency/${alertId}/safe`, {method: "POST"});
+                const card = button.closest(".emergency-alert-card");
+                if (card) {
+                    card.remove();
+                }
+            });
+        });
+    }
+
+    function isSameOriginLink(link) {
+        try {
+            return new URL(link.href, location.href).origin === location.origin;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function shouldHandleSpaLink(link) {
+        if (!link || link.target || link.hasAttribute("download") || link.dataset.noSpa) {
+            return false;
+        }
+        try {
+            const url = new URL(link.href, location.href);
+            if (url.origin !== location.origin) {
+                return false;
+            }
+            const blockedRoutes = ["/logout", "/login", "/register"];
+            if (blockedRoutes.some(function (route) { return url.pathname.startsWith(route); })) {
+                return false;
+            }
+            if (url.pathname === location.pathname) {
+                return false;
+            }
+            return true;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    async function navigateTo(url, replace) {
+        try {
+            const response = await fetch(url, {
+                method: "GET",
+                headers: {
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Accept": "text/html"
+                },
+                credentials: "same-origin"
+            });
+
+            if (!response.ok) {
+                alert("Could not load page. Please try again.");
+                return;
+            }
+
+            const html = await response.text();
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, "text/html");
+            const newMain = doc.querySelector("main");
+            if (!newMain) {
+                alert("Could not load page content.");
+                return;
+            }
+
+            const currentMain = document.querySelector("main");
+            if (!currentMain) {
+                alert("Could not update page content.");
+                return;
+            }
+
+            currentMain.replaceWith(newMain);
+            document.title = doc.title || document.title;
+            const finalUrl = response.url || url;
+            if (replace) {
+                history.replaceState({url: finalUrl}, "", finalUrl);
+            } else {
+                history.pushState({url: finalUrl}, "", finalUrl);
+            }
+            executeInlineScripts(newMain);
+            setupAvatarFallbacks();
+            bindDynamicPageHandlers(newMain);
+            window.scrollTo(0, 0);
+        } catch (error) {
+            alert("Navigation failed. Please try again.");
+        }
+    }
+
+    function shouldHandleSpaForm(form) {
+        if (!form || form.dataset.noSpa) {
+            return false;
+        }
+        const method = (form.method || "GET").toUpperCase();
+        if (method !== "GET" && method !== "POST") {
+            return false;
+        }
+        if (!form.closest("main")) {
+            return false;
+        }
+        const actionUrl = form.action || location.href;
+        let url;
+        try {
+            url = new URL(actionUrl, location.href);
+        } catch (error) {
+            return false;
+        }
+        if (url.origin !== location.origin) {
+            return false;
+        }
+        const blockedRoutes = ["/logout", "/login", "/register"];
+        if (blockedRoutes.some(function (route) { return url.pathname.startsWith(route); })) {
+            return false;
+        }
+        return true;
+    }
+
+    async function submitSpaForm(form) {
+        const method = (form.method || "GET").toUpperCase();
+        const actionUrl = form.action || location.href;
+        const url = new URL(actionUrl, location.href);
+        let options = {
+            method: method,
+            credentials: "same-origin",
+            headers: {
+                "X-Requested-With": "XMLHttpRequest"
+            }
+        };
+        if (method === "GET") {
+            const formData = new FormData(form);
+            const params = new URLSearchParams(formData);
+            url.search = params.toString();
+        } else {
+            const formData = new FormData(form);
+            options.body = formData;
+        }
+
+        const response = await fetch(url.toString(), options);
+        const contentType = response.headers.get("Content-Type") || "";
+        if (contentType.includes("application/json")) {
+            const data = await response.json();
+            if (!response.ok || !data.ok) {
+                alert(data.error || "Form submission failed.");
+                return;
+            }
+            if (data.redirect) {
+                await navigateTo(data.redirect);
+                return;
+            }
+            if (data.html) {
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(data.html, "text/html");
+                const newMain = doc.querySelector("main");
+                if (newMain) {
+                    const currentMain = document.querySelector("main");
+                    currentMain.replaceWith(newMain);
+                    document.title = doc.title || document.title;
+                    executeInlineScripts(newMain);
+                    setupAvatarFallbacks();
+                    bindDynamicPageHandlers(newMain);
+                    return;
+                }
+            }
+            return;
+        }
+
+        if (!response.ok) {
+            alert("Form submission failed.");
+            return;
+        }
+
+        const html = await response.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, "text/html");
+        const newMain = doc.querySelector("main");
+        if (!newMain) {
+            alert("Could not update page content.");
+            return;
+        }
+
+        const currentMain = document.querySelector("main");
+        currentMain.replaceWith(newMain);
+        document.title = doc.title || document.title;
+        const finalUrl = response.url || url.toString();
+        history.pushState({url: finalUrl}, "", finalUrl);
+        executeInlineScripts(newMain);
+        setupAvatarFallbacks();
+        bindDynamicPageHandlers(newMain);
+        window.scrollTo(0, 0);
+    }
+
+    document.addEventListener("submit", function (event) {
+        if (event.defaultPrevented) {
+            return;
+        }
+        const form = event.target;
+        if (!shouldHandleSpaForm(form)) {
+            return;
+        }
+        event.preventDefault();
+        submitSpaForm(form).catch(function () {
+            alert("Could not submit form. Please try again.");
+        });
+    });
+
+    document.addEventListener("click", function (event) {
+        if (event.defaultPrevented) {
+            return;
+        }
+        const link = event.target.closest("a");
+        if (!link) {
+            return;
+        }
+        try {
+            const url = new URL(link.href, location.href);
+            if (url.origin === location.origin && url.pathname === location.pathname && url.hash) {
+                const target = document.querySelector(url.hash);
+                if (target) {
+                    event.preventDefault();
+                    target.scrollIntoView({behavior: "smooth"});
+                    return;
+                }
+            }
+        } catch (error) {
+            // Ignore invalid URLs and continue.
+        }
+        if (!shouldHandleSpaLink(link)) {
+            return;
+        }
+        event.preventDefault();
+        navigateTo(link.href);
+    });
+
+    window.addEventListener("popstate", function (event) {
+        if (event.state && event.state.url) {
+            navigateTo(event.state.url, true);
+        }
+    });
+
+    history.replaceState({url: location.href}, "", location.href);
+    bindDynamicPageHandlers(document);
+
     document.querySelectorAll(".flash").forEach(function (message) {
         setTimeout(function () {
             message.remove();

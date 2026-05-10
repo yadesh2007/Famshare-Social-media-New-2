@@ -1642,23 +1642,41 @@ def send_message_fallback(conversation_id):
     message_text = request.form.get("message_text", "").strip()
 
     if not message_text:
+        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return jsonify({"ok": False, "error": "Message cannot be empty."}), 400
         flash("Message cannot be empty.", "danger")
         return redirect(url_for("chat_room", conversation_id=conversation_id))
 
     conversation = get_conversation_for_user(conversation_id, current_id)
 
     if not conversation:
+        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return jsonify({"ok": False, "error": "Conversation not found."}), 404
         flash("Conversation not found.", "danger")
         return redirect(url_for("chat_list"))
 
-    db.execute(
+    result = db.execute(
         """
         INSERT INTO messages (conversation_id, sender_id, message_text)
         VALUES (?, ?, ?)
         """,
         (conversation_id, current_id, message_text),
     )
+    message_id = result.lastrowid
     db.commit()
+
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        created_at_row = db.execute(
+            "SELECT created_at FROM messages WHERE id = ?",
+            (message_id,),
+        ).fetchone()
+        created_at = created_at_row["created_at"] if created_at_row else None
+        return jsonify({
+            "ok": True,
+            "message_id": message_id,
+            "created_at": created_at,
+            "message_text": message_text,
+        })
 
     return redirect(url_for("chat_room", conversation_id=conversation_id))
 
