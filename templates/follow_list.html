@@ -1,13 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
-<h2 class="page-title">All Users</h2>
+<h2 class="page-title">{{ title }}</h2>
 
 <div class="user-grid">
-    {% for user in users %}
-        <div class="card user-card">
+    {% for user in people %}
+        <div class="card user-card follow-list-card">
             <img class="profile-pic-small" src="{{ profile_image_url(user.profile_pic) }}" alt="profile">
             <h3>{{ user.username }}</h3>
-            <p>{{ user.email }}</p>
             <p>{{ user.bio or "No bio" }}</p>
             <p><strong>{{ user.post_count }}</strong> Posts</p>
             <div class="user-card-actions">
@@ -22,6 +21,8 @@
                 {% endif %}
             </div>
         </div>
+    {% else %}
+        <div class="card">{{ empty_message }}</div>
     {% endfor %}
 </div>
 {% endblock %}

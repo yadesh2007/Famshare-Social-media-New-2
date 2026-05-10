@@ -37,7 +37,7 @@
                 <a class="sidebar-profile" href="{{ url_for('profile', user_id=current_user_data.id) }}">
                     <img
                         class="avatar"
-                        src="{{ url_for('static', filename='uploads/profiles/' + current_user_data.profile_pic) if current_user_data.profile_pic != 'default.png' else url_for('static', filename='img/default.png') }}"
+                        src="{{ profile_image_url(current_user_data.profile_pic) }}"
                         alt="{{ current_user_data.username }} profile"
                     >
                     <div>
@@ -49,12 +49,11 @@
                 <nav class="side-links" aria-label="Main navigation">
                     <button id="open-sos-modal" class="sos-nav-btn" type="button">SOS</button>
                     <a href="{{ url_for('feed') }}">Home</a>
-                    <a href="{{ url_for('emergency_feed') }}">Emergency Feed</a>
+                    <a href="{{ url_for('emergency_feed') }}">Emergency</a>
                     <a href="{{ url_for('search') }}">Search</a>
                     <a href="{{ url_for('create_post') }}">Create Post</a>
                     <a href="{{ url_for('create_story') }}">Add Story</a>
                     <a href="{{ url_for('chat_list') }}">Messages</a>
-                    <a href="{{ url_for('ai_tools') }}">AI Tools</a>
                     <a href="{{ url_for('logout') }}">Logout</a>
                 </nav>
             </div>

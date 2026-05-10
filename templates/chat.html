@@ -13,7 +13,7 @@
                 >
                     <img
                         class="avatar"
-                        src="{% if convo.other_profile_pic != 'default.png' %}{{ url_for('static', filename='uploads/profiles/' + convo.other_profile_pic) }}{% else %}{{ url_for('static', filename='img/default.png') }}{% endif %}"
+                        src="{{ profile_image_url(convo.other_profile_pic) }}"
                         alt="{{ convo.other_username }} profile"
                     >
                     <div class="chat-convo-text">
@@ -33,7 +33,7 @@
         <div class="chat-topbar">
             <img
                 class="avatar"
-                src="{% if other_user.profile_pic != 'default.png' %}{{ url_for('static', filename='uploads/profiles/' + other_user.profile_pic) }}{% else %}{{ url_for('static', filename='img/default.png') }}{% endif %}"
+                src="{{ profile_image_url(other_user.profile_pic) }}"
                 alt="{{ other_user.username }} profile"
             >
             <div>
@@ -541,6 +541,15 @@
 
     socket.on("disconnect", function () {
         chatStatus.textContent = "Reconnecting...";
+    });
+
+    socket.on("connect_error", function () {
+        chatStatus.textContent = "Connection failed. Reconnecting...";
+    });
+
+    socket.on("reconnect", function () {
+        chatStatus.textContent = "Reconnected. Joining chat...";
+        socket.emit("join_chat", { conversation_id: conversationId });
     });
 
     socket.on("chat_joined", function (data) {

@@ -9,14 +9,12 @@
 - Follow/unfollow system
 - User profiles
 - Search users and posts
-- AI tools using offline Ollama
 - Admin dashboard
 
 ## Requirements
 - Python 3.10+
 - Flask
 - SQLite
-- requests
 - python-dotenv
 - Werkzeug
 

@@ -11,10 +11,21 @@
 {% if q %}
     <h3 class="page-title">User Results</h3>
     {% for user in users_result %}
-        <div class="card">
-            <a href="{{ url_for('profile', user_id=user.id) }}"><strong>{{ user.username }}</strong></a>
+        <div class="card search-result-user-card">
+            <a class="search-user-link" href="{{ url_for('profile', user_id=user.id) }}"><strong>{{ user.username }}</strong></a>
             {% if user.bio %}
                 <p>{{ user.bio }}</p>
+            {% endif %}
+            {% if session.get('user_id') and session.get('user_id') != user.id %}
+                <div class="user-card-actions">
+                    <form method="POST" action="{{ url_for('follow_user', user_id=user.id) }}">
+                        <input type="hidden" name="next" value="{{ request.full_path }}">
+                        <button type="submit" class="btn small-btn">
+                            {% if user.id in following_ids %}Unfollow{% else %}Follow{% endif %}
+                        </button>
+                    </form>
+                    <a class="btn small-btn" href="{{ url_for('profile', user_id=user.id) }}">View Profile</a>
+                </div>
             {% endif %}
         </div>
     {% else %}

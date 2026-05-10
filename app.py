@@ -16,7 +16,6 @@ from config import Config
 from db import get_db, close_db, init_db, table_exists
 from utils.auth import login_required
 from utils.upload import save_post_media, save_profile_media
-from utils.ai_tools import generate_ai_text
 from utils.helpers import current_user, is_following
 
 app = Flask(__name__)
@@ -439,6 +438,18 @@ def get_conversation_for_user(conversation_id, user_id):
     ).fetchone()
 
 
+def followed_user_ids(user_id):
+    if not user_id:
+        return set()
+
+    db = get_db()
+    rows = db.execute(
+        "SELECT following_id FROM follows WHERE follower_id = ?",
+        (user_id,),
+    ).fetchall()
+    return {row["following_id"] for row in rows}
+
+
 def socket_user():
     """Validate SocketIO identity from the Flask session."""
     if not session.get("user_id") or session_has_expired():
@@ -452,6 +463,15 @@ def socket_user():
     session["username"] = user["username"]
     refresh_session_activity()
     return user
+
+
+def profile_image_url(profile_pic):
+    if not profile_pic or profile_pic == "default.png":
+        return url_for("static", filename="img/default.png")
+    return url_for("static", filename=f"uploads/profiles/{profile_pic}")
+
+
+app.jinja_env.globals["profile_image_url"] = profile_image_url
 
 
 @app.route("/initdb")
@@ -967,6 +987,66 @@ def profile(user_id):
     )
 
 
+@app.route("/profile/<int:user_id>/followers")
+@login_required
+def profile_followers(user_id):
+    db = get_db()
+    user = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not user:
+        flash("User not found.", "danger")
+        return redirect(url_for("users"))
+
+    people = db.execute(
+        """
+        SELECT users.*,
+               (SELECT COUNT(*) FROM posts WHERE posts.user_id = users.id) AS post_count
+        FROM follows
+        JOIN users ON users.id = follows.follower_id
+        WHERE follows.following_id = ?
+        ORDER BY follows.id DESC
+        """,
+        (user_id,),
+    ).fetchall()
+
+    return render_template(
+        "follow_list.html",
+        title=f"{user['username']}'s Followers",
+        empty_message="No followers yet.",
+        people=people,
+        following_ids=followed_user_ids(session.get("user_id")),
+    )
+
+
+@app.route("/profile/<int:user_id>/following")
+@login_required
+def profile_following(user_id):
+    db = get_db()
+    user = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not user:
+        flash("User not found.", "danger")
+        return redirect(url_for("users"))
+
+    people = db.execute(
+        """
+        SELECT users.*,
+               (SELECT COUNT(*) FROM posts WHERE posts.user_id = users.id) AS post_count
+        FROM follows
+        JOIN users ON users.id = follows.following_id
+        WHERE follows.follower_id = ?
+        ORDER BY follows.id DESC
+        """,
+        (user_id,),
+    ).fetchall()
+
+    return render_template(
+        "follow_list.html",
+        title=f"{user['username']} is Following",
+        empty_message="Not following anyone yet.",
+        people=people,
+        following_ids=followed_user_ids(session.get("user_id")),
+    )
+
+
 @app.route("/edit_profile", methods=["GET", "POST"])
 @login_required
 def edit_profile():
@@ -1029,9 +1109,13 @@ def edit_profile():
 @app.route("/follow/<int:user_id>", methods=["POST"])
 @login_required
 def follow_user(user_id):
+    redirect_to = request.form.get("next")
+    if not is_safe_redirect_url(redirect_to):
+        redirect_to = url_for("profile", user_id=user_id)
+
     if session["user_id"] == user_id:
         flash("You cannot follow yourself.", "warning")
-        return redirect(url_for("profile", user_id=user_id))
+        return redirect(redirect_to)
 
     db = get_db()
     target_user = db.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -1051,14 +1135,16 @@ def follow_user(user_id):
             "DELETE FROM follows WHERE follower_id = ? AND following_id = ?",
             (session["user_id"], user_id),
         )
+        flash("Unfollowed user.", "info")
     else:
         db.execute(
             "INSERT INTO follows (follower_id, following_id) VALUES (?, ?)",
             (session["user_id"], user_id),
         )
+        flash("Now following user.", "success")
 
     db.commit()
-    return redirect(url_for("profile", user_id=user_id))
+    return redirect(redirect_to)
 
 
 @app.route("/users")
@@ -1072,7 +1158,8 @@ def users():
         ORDER BY users.created_at DESC
         """
     ).fetchall()
-    return render_template("users.html", users=users_data)
+    following_ids = followed_user_ids(session.get("user_id"))
+    return render_template("users.html", users=users_data, following_ids=following_ids)
 
 
 @app.route("/search")
@@ -1104,44 +1191,13 @@ def search():
             (f"%{q}%",),
         ).fetchall()
 
+    following_ids = followed_user_ids(session.get("user_id"))
     return render_template(
         "search.html",
         q=q,
         users_result=users_result,
         posts_result=posts_result,
-    )
-
-
-@app.route("/ai_tools", methods=["GET", "POST"])
-@login_required
-def ai_tools():
-    output = ""
-    selected_tool = "caption"
-    input_text = ""
-
-    if request.method == "POST":
-        selected_tool = request.form.get("tool", "caption")
-        input_text = request.form.get("input_text", "").strip()
-
-        if input_text:
-            output = generate_ai_text(selected_tool, input_text)
-            db = get_db()
-            db.execute(
-                """
-                INSERT INTO ai_history (user_id, tool, input_text, output_text)
-                VALUES (?, ?, ?, ?)
-                """,
-                (session["user_id"], selected_tool, input_text, output),
-            )
-            db.commit()
-        else:
-            flash("Please enter input text.", "danger")
-
-    return render_template(
-        "ai_tools.html",
-        output=output,
-        selected_tool=selected_tool,
-        input_text=input_text,
+        following_ids=following_ids,
     )
 
 

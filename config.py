@@ -16,7 +16,3 @@ class Config:
 
     ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
     ALLOWED_VIDEO_EXTENSIONS = {"mp4", "mov", "avi", "mkv", "webm"}
-
-    OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
-    OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "phi3:mini")
-    OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "60"))

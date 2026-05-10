@@ -51,6 +51,12 @@ window.addEventListener("load", function () {
         });
     }
 
+    document.querySelectorAll(".flash").forEach(function (message) {
+        setTimeout(function () {
+            message.remove();
+        }, 5200);
+    });
+
     const profilePhotoInput = document.getElementById("profile-photo-input");
     const profilePhotoPreview = document.getElementById("profile-photo-preview");
     const removeProfilePhotoBtn = document.getElementById("remove-profile-photo");
@@ -206,7 +212,7 @@ window.addEventListener("load", function () {
         emergencyToast.innerHTML = `
             <strong>${alert.emergency_type} · ${alert.severity}</strong>
             <p>${alert.username} needs help${alert.location_text ? " near " + alert.location_text : ""}.</p>
-            <a href="/emergency">Open Emergency Feed</a>
+            <a href="/emergency">Open Emergency</a>
         `;
         emergencyToast.classList.add("show-emergency-toast");
         playEmergencySound();
@@ -226,7 +232,7 @@ window.addEventListener("load", function () {
         emergencyToast.innerHTML = `
             <strong>SOS sent</strong>
             <p>${nearbyText}</p>
-            <a href="/emergency">Open Emergency Feed</a>
+            <a href="/emergency">Open Emergency</a>
         `;
         emergencyToast.classList.add("show-emergency-toast");
         setTimeout(function () {

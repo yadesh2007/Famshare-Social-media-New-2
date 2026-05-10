@@ -15,7 +15,7 @@
                 <img
                     id="profile-photo-preview"
                     class="avatar"
-                    src="{{ url_for('static', filename='uploads/profiles/' + user.profile_pic) if user.profile_pic != 'default.png' else url_for('static', filename='img/default.png') }}"
+                    src="{{ profile_image_url(user.profile_pic) }}"
                     data-default-src="{{ url_for('static', filename='img/default.png') }}"
                     alt="{{ user.username }} profile"
                 >

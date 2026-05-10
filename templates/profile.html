@@ -14,19 +14,20 @@
     {% endif %}
 
     <div class="profile-top">
-        <img class="profile-pic-large" src="{{ url_for('static', filename='uploads/profiles/' + user.profile_pic) if user.profile_pic != 'default.png' else url_for('static', filename='img/default.png') }}" alt="profile">
+        <img class="profile-pic-large" src="{{ profile_image_url(user.profile_pic) }}" alt="profile">
         <div>
             <h2>{{ user.username }}</h2>
             <p>{{ user.bio or "No bio yet." }}</p>
             <div class="profile-stats">
                 <span><strong>{{ posts|length }}</strong> Posts</span>
-                <span><strong>{{ followers }}</strong> Followers</span>
-                <span><strong>{{ following }}</strong> Following</span>
+                <a href="{{ url_for('profile_followers', user_id=user.id) }}"><strong>{{ followers }}</strong> Followers</a>
+                <a href="{{ url_for('profile_following', user_id=user.id) }}"><strong>{{ following }}</strong> Following</a>
             </div>
 
             {% if can_follow %}
                 <div class="profile-action-row">
                     <form method="POST" action="{{ url_for('follow_user', user_id=user.id) }}">
+                        <input type="hidden" name="next" value="{{ request.full_path }}">
                         <button type="submit" class="btn">
                             {% if already_following %}Unfollow{% else %}Follow{% endif %}
                         </button>

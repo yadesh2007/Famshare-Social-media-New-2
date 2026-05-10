@@ -6,7 +6,7 @@
     {% if viewers %}
         {% for viewer in viewers %}
         <div class="viewer-row">
-            <img class="avatar" src="{{ url_for('static', filename='uploads/profiles/' + viewer.profile_pic) if viewer.profile_pic != 'default.png' else url_for('static', filename='img/default.png') }}" alt="viewer">
+            <img class="avatar" src="{{ profile_image_url(viewer.profile_pic) }}" alt="viewer">
             <div>
                 <strong>{{ viewer.username }}</strong>
                 <div class="muted">{{ viewer.viewed_at }}</div>

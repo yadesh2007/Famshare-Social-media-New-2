@@ -12,7 +12,6 @@ DROP TABLE IF EXISTS stories;
 DROP TABLE IF EXISTS likes;
 DROP TABLE IF EXISTS comments;
 DROP TABLE IF EXISTS follows;
-DROP TABLE IF EXISTS ai_history;
 DROP TABLE IF EXISTS posts;
 DROP TABLE IF EXISTS users;
 
@@ -64,16 +63,6 @@ CREATE TABLE follows (
     UNIQUE(follower_id, following_id),
     FOREIGN KEY (follower_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (following_id) REFERENCES users(id) ON DELETE CASCADE
-);
-
-CREATE TABLE ai_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    tool TEXT NOT NULL,
-    input_text TEXT NOT NULL,
-    output_text TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE TABLE stories (
