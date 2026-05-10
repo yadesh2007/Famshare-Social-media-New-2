@@ -68,20 +68,32 @@ window.addEventListener("load", function () {
         });
     }
 
-    function executeInlineScripts(root) {
-        root.querySelectorAll("script").forEach(function (oldScript) {
+    async function executeInlineScripts(root) {
+        const scripts = Array.from(root.querySelectorAll("script"));
+        for (const oldScript of scripts) {
             const script = document.createElement("script");
             Array.from(oldScript.attributes).forEach(function (attr) {
                 script.setAttribute(attr.name, attr.value);
             });
+
             if (oldScript.src) {
+                const existingScript = document.querySelector(`script[src="${oldScript.src}"]`);
+                if (existingScript) {
+                    oldScript.parentNode.removeChild(oldScript);
+                    continue;
+                }
                 script.src = oldScript.src;
                 script.async = false;
+                await new Promise(function (resolve) {
+                    script.onload = resolve;
+                    script.onerror = resolve;
+                    oldScript.parentNode.replaceChild(script, oldScript);
+                });
             } else {
                 script.textContent = oldScript.textContent;
+                oldScript.parentNode.replaceChild(script, oldScript);
             }
-            oldScript.parentNode.replaceChild(script, oldScript);
-        });
+        }
     }
 
     function bindDynamicPageHandlers(root) {
@@ -216,7 +228,7 @@ window.addEventListener("load", function () {
             } else {
                 history.pushState({url: finalUrl}, "", finalUrl);
             }
-            executeInlineScripts(newMain);
+            await executeInlineScripts(newMain);
             setupAvatarFallbacks();
             bindDynamicPageHandlers(newMain);
             window.scrollTo(0, 0);
@@ -293,7 +305,7 @@ window.addEventListener("load", function () {
                     const currentMain = document.querySelector("main");
                     currentMain.replaceWith(newMain);
                     document.title = doc.title || document.title;
-                    executeInlineScripts(newMain);
+                    await executeInlineScripts(newMain);
                     setupAvatarFallbacks();
                     bindDynamicPageHandlers(newMain);
                     return;
@@ -321,7 +333,7 @@ window.addEventListener("load", function () {
         document.title = doc.title || document.title;
         const finalUrl = response.url || url.toString();
         history.pushState({url: finalUrl}, "", finalUrl);
-        executeInlineScripts(newMain);
+        await executeInlineScripts(newMain);
         setupAvatarFallbacks();
         bindDynamicPageHandlers(newMain);
         window.scrollTo(0, 0);
