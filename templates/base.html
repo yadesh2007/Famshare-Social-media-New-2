@@ -120,6 +120,9 @@
     {% if session.get('user_id') and current_user_data %}
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     {% endif %}
+    <script>
+        window.DEFAULT_AVATAR_SRC = "{{ url_for('static', filename='img/default-avatar.svg') }}";
+    </script>
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
 </html>

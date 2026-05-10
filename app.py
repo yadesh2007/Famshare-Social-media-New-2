@@ -466,8 +466,9 @@ def socket_user():
 
 
 def profile_image_url(profile_pic):
-    if not profile_pic or profile_pic == "default.png":
-        return url_for("static", filename="img/default.png")
+    profile_pic = (profile_pic or "").strip()
+    if not profile_pic or profile_pic in {"default.png", "default-avatar.png", "default-avatar.svg"}:
+        return url_for("static", filename="img/default-avatar.svg")
     return url_for("static", filename=f"uploads/profiles/{profile_pic}")
 
 
@@ -1084,7 +1085,7 @@ def edit_profile():
             flash("Username already exists.", "danger")
             return redirect(url_for("edit_profile"))
 
-        new_profile_pic = "default.png" if remove_profile_pic else user["profile_pic"]
+        new_profile_pic = "" if remove_profile_pic else user["profile_pic"]
         if not remove_profile_pic:
             saved_pic = save_profile_media(profile_pic)
             if saved_pic:

@@ -57,6 +57,22 @@ window.addEventListener("load", function () {
         }, 5200);
     });
 
+    function setupAvatarFallbacks() {
+        const defaultAvatar = window.DEFAULT_AVATAR_SRC || "/static/img/default-avatar.svg";
+        document.querySelectorAll("img.avatar, img.profile-pic-small, img.profile-pic-large, .sidebar-profile img").forEach(function (img) {
+            if (!img.dataset.avatarFallbackBound) {
+                img.dataset.avatarFallbackBound = "1";
+                img.onerror = function () {
+                    if (img.src !== defaultAvatar) {
+                        img.src = defaultAvatar;
+                    }
+                };
+            }
+        });
+    }
+
+    setupAvatarFallbacks();
+
     const profilePhotoInput = document.getElementById("profile-photo-input");
     const profilePhotoPreview = document.getElementById("profile-photo-preview");
     const removeProfilePhotoBtn = document.getElementById("remove-profile-photo");
