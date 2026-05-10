@@ -51,6 +51,23 @@ window.addEventListener("load", function () {
         });
     }
 
+    const appSidebar = document.getElementById("app-sidebar");
+    if (appSidebar) {
+        appSidebar.addEventListener("click", function (event) {
+            if (!window.matchMedia("(max-width: 900px)").matches) {
+                return;
+            }
+            const clickedItem = event.target.closest("a, button");
+            if (!clickedItem) {
+                return;
+            }
+            if (clickedItem.id === "sidebar-toggle") {
+                return;
+            }
+            setSidebarOpen(false);
+        });
+    }
+
     document.querySelectorAll(".flash").forEach(function (message) {
         setTimeout(function () {
             message.remove();
