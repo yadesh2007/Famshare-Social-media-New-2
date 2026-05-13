@@ -6,7 +6,17 @@
     <title>FamShare Chat</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
-<body data-current-user-id="{{ current_user_data.id if session.get('user_id') and current_user_data else '' }}">
+<body class="intro-lock" data-current-user-id="{{ current_user_data.id if session.get('user_id') and current_user_data else '' }}">
+    <div id="intro-screen" role="status" aria-live="polite" aria-label="Loading FamShare Chat">
+        <div class="intro-cover"></div>
+        <div class="intro-logo-wrap">
+            <div class="intro-logo-circle" aria-hidden="true">F</div>
+            <h1 class="intro-title">FamShare Chat</h1>
+            <p class="intro-subtitle">Loading...</p>
+            <div class="intro-loader" aria-hidden="true"></div>
+        </div>
+    </div>
+
     <div id="main-content" class="{% if session.get('user_id') and current_user_data %}app-shell{% else %}public-shell{% endif %}">
         {% if session.get('user_id') and current_user_data %}
         <button

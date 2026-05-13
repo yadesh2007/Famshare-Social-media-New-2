@@ -57,6 +57,10 @@ html, body {
     transition: background 0.35s ease, color 0.35s ease;
 }
 
+body.intro-lock {
+    overflow: hidden;
+}
+
 a {
     text-decoration: none;
     color: inherit;
@@ -89,6 +93,7 @@ a {
     z-index: 2;
     text-align: center;
     color: white;
+    padding: 24px;
     transition: opacity 0.45s ease, transform 0.45s ease;
     animation: introPop 1s ease;
 }
@@ -110,9 +115,9 @@ a {
 }
 
 .intro-title {
-    font-size: 64px;
+    font-size: clamp(40px, 8vw, 64px);
     margin: 0;
-    letter-spacing: 1px;
+    letter-spacing: 0;
     text-shadow: 0 8px 24px rgba(0,0,0,0.18);
 }
 
@@ -120,6 +125,16 @@ a {
     margin-top: 12px;
     font-size: 20px;
     opacity: 0.95;
+}
+
+.intro-loader {
+    width: 46px;
+    height: 46px;
+    margin: 24px auto 0;
+    border-radius: 50%;
+    border: 4px solid rgba(255,255,255,0.35);
+    border-top-color: white;
+    animation: introSpin 0.9s linear infinite;
 }
 
 .intro-slide-up .intro-cover {
@@ -147,6 +162,26 @@ a {
     50% { background-position: 100% 50%; }
     100% { background-position: 0% 50%; }
 }
+
+@keyframes introSpin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .intro-cover,
+    .intro-logo-wrap,
+    .intro-loader {
+        animation: none;
+    }
+
+    .intro-cover,
+    .intro-logo-wrap {
+        transition-duration: 0.2s;
+    }
+}
+
 .show-content {
     opacity: 1;
     transform: translateY(0);
@@ -183,6 +218,14 @@ body.sidebar-closed .app-shell {
     max-width: 1100px;
     margin: 0 auto;
     padding: 28px;
+}
+
+.auth-page {
+    min-height: calc(100vh - 56px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 0;
 }
 
 .sidebar {
@@ -407,7 +450,42 @@ body.sidebar-closed .sidebar-toggle-btn {
 
 .login-card {
     width: min(100%, 440px);
-    margin: min(12vh, 96px) auto 0;
+    margin: 0 auto;
+    padding: 28px;
+}
+
+.auth-card-header {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.auth-card-header h2 {
+    margin: 10px 0 6px;
+    font-size: 30px;
+}
+
+.auth-card-header p {
+    margin: 0;
+}
+
+.auth-logo-mark {
+    width: 64px;
+    height: 64px;
+    margin: 0 auto;
+    border-radius: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 30px;
+    font-weight: 800;
+    background: linear-gradient(135deg, var(--primary), var(--secondary), var(--cyan));
+    box-shadow: var(--shadow);
+}
+
+.login-card .btn {
+    width: 100%;
+    margin-top: 18px;
 }
 
 .auth-alt-action {

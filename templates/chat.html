@@ -57,18 +57,45 @@
 <script>
     const conversationId = {{ conversation_id }};
     const currentUserId = {{ current_user_id }};
+    const sendUrl = "{{ url_for('send_message_fallback', conversation_id=conversation_id) }}";
+    const messagesUrl = "{{ url_for('chat_messages_since', conversation_id=conversation_id) }}";
     const chatMessages = document.getElementById("chat-messages");
     const chatForm = document.getElementById("chat-form");
     const messageInput = document.getElementById("message-input");
+    const renderedMessages = new Set();
+    let lastMessageId = 0;
+    let isPolling = false;
     const socket = typeof io === "undefined"
         ? null
         : io({ transports: ["websocket", "polling"], reconnection: true });
+
+    document.querySelectorAll("[data-message-id]").forEach(function(row) {
+        const messageId = Number(row.dataset.messageId);
+        if (messageId) {
+            renderedMessages.add(String(messageId));
+            lastMessageId = Math.max(lastMessageId, messageId);
+        }
+    });
 
     function scrollToBottom() {
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
+    function updateSidebarPreview(text) {
+        const activeChatPreview = document.querySelector(".chat-convo-item.active-chat .muted");
+        if (activeChatPreview) {
+            activeChatPreview.textContent = text;
+        }
+    }
+
     function appendMessage(data) {
+        const messageId = String(data.message_id);
+        if (renderedMessages.has(messageId)) {
+            return;
+        }
+        renderedMessages.add(messageId);
+        lastMessageId = Math.max(lastMessageId, Number(data.message_id) || 0);
+
         const emptyMessage = document.getElementById("empty-chat-message");
         if (emptyMessage) {
             emptyMessage.remove();
@@ -91,7 +118,54 @@
         bubble.appendChild(timeNode);
         row.appendChild(bubble);
         chatMessages.appendChild(row);
+        updateSidebarPreview(data.message_text);
         scrollToBottom();
+    }
+
+    async function fetchNewMessages() {
+        if (isPolling) {
+            return;
+        }
+
+        isPolling = true;
+        try {
+            const response = await fetch(messagesUrl + "?after_id=" + encodeURIComponent(lastMessageId), {
+                headers: { "Accept": "application/json" },
+                credentials: "same-origin"
+            });
+
+            if (!response.ok) {
+                return;
+            }
+
+            const data = await response.json();
+            if (data.ok && Array.isArray(data.messages)) {
+                data.messages.forEach(appendMessage);
+            }
+        } catch (error) {
+            console.warn("Message refresh failed", error);
+        } finally {
+            isPolling = false;
+        }
+    }
+
+    async function sendMessageWithFetch(text) {
+        const response = await fetch(sendUrl, {
+            method: "POST",
+            headers: {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "X-Requested-With": "XMLHttpRequest"
+            },
+            credentials: "same-origin",
+            body: JSON.stringify({ message_text: text })
+        });
+
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+            throw new Error(data.error || "Message could not be sent.");
+        }
+        appendMessage(data.message);
     }
 
     if (socket) {
@@ -110,23 +184,31 @@
         });
     }
 
-    chatForm.addEventListener("submit", function(event) {
-        if (!socket || !socket.connected) {
-            return;
-        }
-
+    chatForm.addEventListener("submit", async function(event) {
         event.preventDefault();
         const text = messageInput.value.trim();
         if (!text) {
             return;
         }
-        socket.emit("send_chat_message", {
-            conversation_id: conversationId,
-            message_text: text
-        });
+
         messageInput.value = "";
+        try {
+            if (socket && socket.connected) {
+                socket.emit("send_chat_message", {
+                    conversation_id: conversationId,
+                    message_text: text
+                });
+            } else {
+                await sendMessageWithFetch(text);
+            }
+        } catch (error) {
+            console.warn(error.message || "Message could not be sent.");
+            messageInput.value = text;
+        }
     });
 
+    setInterval(fetchNewMessages, 2500);
+    fetchNewMessages();
     scrollToBottom();
 </script>
 {% endblock %}

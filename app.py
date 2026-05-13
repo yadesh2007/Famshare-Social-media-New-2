@@ -506,6 +506,17 @@ def get_conversation_for_user(conversation_id, user_id):
     ).fetchone()
 
 
+def chat_message_payload(message):
+    return {
+        "conversation_id": int(message["conversation_id"]),
+        "sender_id": int(message["sender_id"]),
+        "sender_name": message["username"],
+        "message_text": message["message_text"],
+        "created_at": message["created_at"],
+        "message_id": int(message["id"]),
+    }
+
+
 def followed_user_ids(user_id):
     if not user_id:
         return set()
@@ -1707,10 +1718,16 @@ def chat_room(conversation_id):
 def send_message_fallback(conversation_id):
     db = get_db()
     current_id = session["user_id"]
-    message_text = request.form.get("message_text", "").strip()
+    data = request.get_json(silent=True) or {}
+    message_text = (data.get("message_text") or request.form.get("message_text", "")).strip()
+    wants_json = (
+        request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or request.is_json
+        or "application/json" in request.headers.get("Accept", "")
+    )
 
     if not message_text:
-        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        if wants_json:
             return jsonify({"ok": False, "error": "Message cannot be empty."}), 400
         flash("Message cannot be empty.", "danger")
         return redirect(url_for("chat_room", conversation_id=conversation_id))
@@ -1718,7 +1735,7 @@ def send_message_fallback(conversation_id):
     conversation = get_conversation_for_user(conversation_id, current_id)
 
     if not conversation:
-        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        if wants_json:
             return jsonify({"ok": False, "error": "Conversation not found."}), 404
         flash("Conversation not found.", "danger")
         return redirect(url_for("chat_list"))
@@ -1733,20 +1750,88 @@ def send_message_fallback(conversation_id):
     message_id = result.lastrowid
     db.commit()
 
-    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
-        created_at_row = db.execute(
-            "SELECT created_at FROM messages WHERE id = ?",
-            (message_id,),
-        ).fetchone()
-        created_at = created_at_row["created_at"] if created_at_row else None
-        return jsonify({
-            "ok": True,
-            "message_id": message_id,
-            "created_at": created_at,
-            "message_text": message_text,
-        })
+    message = db.execute(
+        """
+        SELECT messages.*, users.username
+        FROM messages
+        JOIN users ON messages.sender_id = users.id
+        WHERE messages.id = ?
+        """,
+        (message_id,),
+    ).fetchone()
+    payload = chat_message_payload(message)
+    socketio.emit("receive_chat_message", payload, to=f"conversation_{conversation_id}")
+
+    if wants_json:
+        return jsonify({"ok": True, "message": payload})
 
     return redirect(url_for("chat_room", conversation_id=conversation_id))
+
+
+@app.route("/chat/<int:conversation_id>/messages")
+@login_required
+def chat_messages_since(conversation_id):
+    db = get_db()
+    current_id = session["user_id"]
+    conversation = get_conversation_for_user(conversation_id, current_id)
+
+    if not conversation:
+        return jsonify({"ok": False, "error": "Conversation not found."}), 404
+
+    try:
+        after_id = int(request.args.get("after_id", 0))
+    except (TypeError, ValueError):
+        after_id = 0
+
+    rows = db.execute(
+        """
+        SELECT messages.*, users.username
+        FROM messages
+        JOIN users ON messages.sender_id = users.id
+        WHERE messages.conversation_id = ? AND messages.id > ?
+        ORDER BY messages.created_at ASC, messages.id ASC
+        """,
+        (conversation_id, after_id),
+    ).fetchall()
+
+    if rows:
+        db.execute(
+            """
+            UPDATE messages
+            SET is_read = 1
+            WHERE conversation_id = ? AND sender_id != ?
+            """,
+            (conversation_id, current_id),
+        )
+        db.commit()
+
+    return jsonify({
+        "ok": True,
+        "messages": [chat_message_payload(row) for row in rows],
+    })
+
+
+@app.route("/chat/<int:conversation_id>/read", methods=["POST"])
+@login_required
+def mark_chat_read(conversation_id):
+    current_id = session["user_id"]
+    conversation = get_conversation_for_user(conversation_id, current_id)
+
+    if not conversation:
+        return jsonify({"ok": False, "error": "Conversation not found."}), 404
+
+    db = get_db()
+    db.execute(
+        """
+        UPDATE messages
+        SET is_read = 1
+        WHERE conversation_id = ? AND sender_id != ?
+        """,
+        (conversation_id, current_id),
+    )
+    db.commit()
+
+    return jsonify({"ok": True})
 
 
 @app.route("/message/<int:message_id>/edit", methods=["POST"])
@@ -1931,20 +2016,24 @@ def handle_send_chat_message(data):
         """,
         (conversation_id, user["id"], message_text, now_str),
     )
+    message_id = cursor.lastrowid
     db.commit()
+
+    message = db.execute(
+        """
+        SELECT messages.*, users.username
+        FROM messages
+        JOIN users ON messages.sender_id = users.id
+        WHERE messages.id = ?
+        """,
+        (message_id,),
+    ).fetchone()
 
     room = f"conversation_{conversation_id}"
 
     emit(
         "receive_chat_message",
-        {
-            "conversation_id": int(conversation_id),
-            "sender_id": int(user["id"]),
-            "sender_name": user["username"],
-            "message_text": message_text,
-            "created_at": now_str,
-            "message_id": cursor.lastrowid,
-        },
+        chat_message_payload(message),
         to=room,
     )
 

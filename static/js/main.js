@@ -1,7 +1,35 @@
 document.addEventListener("DOMContentLoaded", function() {
+    const introScreen = document.getElementById("intro-screen");
     const toggle = document.getElementById("sidebar-toggle");
     const overlay = document.getElementById("sidebar-overlay");
     const themeToggle = document.getElementById("theme-toggle");
+    const introStartedAt = Date.now();
+
+    function hideIntroScreen() {
+        if (!introScreen) {
+            return;
+        }
+
+        const minimumVisibleTime = 700;
+        const elapsed = Date.now() - introStartedAt;
+        const delay = Math.max(0, minimumVisibleTime - elapsed);
+
+        window.setTimeout(function() {
+            introScreen.classList.add("intro-slide-up");
+            document.body.classList.remove("intro-lock");
+
+            window.setTimeout(function() {
+                introScreen.remove();
+            }, 900);
+        }, delay);
+    }
+
+    if (document.readyState === "complete") {
+        hideIntroScreen();
+    } else {
+        window.addEventListener("load", hideIntroScreen, { once: true });
+        window.setTimeout(hideIntroScreen, 3000);
+    }
 
     function setSidebarState() {
         if (!toggle) {
