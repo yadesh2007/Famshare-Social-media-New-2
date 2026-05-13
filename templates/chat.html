@@ -104,6 +104,7 @@
     let longPressTimer = null;
     let menuOpenedAt = 0;
     let selectedMessageRow = null;
+    let isSendingMessage = false;
     let otherUserOnline = presenceStatus ? presenceStatus.dataset.online === "1" : false;
     const socket = typeof io === "undefined"
         ? null
@@ -486,7 +487,7 @@
     function appendMessage(data) {
         const messageId = String(data.message_id);
         if (renderedMessages.has(messageId)) {
-            chatLog("duplicate message skipped", { message_id: data.message_id });
+            chatLog("DUPLICATE SKIPPED (frontend)", { message_id: data.message_id });
             return;
         }
 
@@ -531,6 +532,7 @@
         row.appendChild(bubble);
         bindMessageMenu(row);
         chatMessages.appendChild(row);
+        chatLog("MESSAGE RENDERED (frontend)", { message_id: data.message_id });
         updateSidebarPreview(data.message_text || data.content);
         scrollToBottom();
 
@@ -576,7 +578,7 @@
     }
 
     async function sendMessageWithFetch(text) {
-        chatLog("sending message with HTTP fallback");
+        chatLog("MESSAGE SENT (frontend)", { transport: "http", conversation_id: conversationId });
         const response = await fetch(sendUrl, {
             method: "POST",
             headers: {
@@ -602,7 +604,7 @@
                 return;
             }
 
-            chatLog("sending message with Socket.IO", { conversation_id: conversationId });
+            chatLog("MESSAGE SENT (frontend)", { transport: "socket", conversation_id: conversationId });
             let settled = false;
             const timeoutId = window.setTimeout(function() {
                 if (!settled) {
@@ -687,18 +689,6 @@
             }
         });
 
-        socket.on("receive_chat_message", function(data) {
-            if (Number(data.conversation_id) === Number(conversationId)) {
-                chatLog(
-                    Number(data.sender_id) === Number(currentUserId)
-                        ? "message received by sender client"
-                        : "message received by recipient client",
-                    { message_id: data.message_id }
-                );
-                appendMessage(data);
-            }
-        });
-
         socket.on("new_message", function(data) {
             if (Number(data.conversation_id) === Number(conversationId)) {
                 chatLog("new_message received in browser", { message_id: data.message_id });
@@ -743,13 +733,18 @@
         });
     }
 
-    chatForm.addEventListener("submit", async function(event) {
+    chatForm.onsubmit = async function(event) {
         event.preventDefault();
+        if (isSendingMessage) {
+            return;
+        }
+
         const text = messageInput.value.trim();
         if (!text) {
             return;
         }
 
+        isSendingMessage = true;
         messageInput.value = "";
         pendingMessageId = appendOptimisticMessage(text);
         try {
@@ -762,18 +757,14 @@
                 fetchNewMessages();
             }
         } catch (error) {
-            try {
-                const confirmedMessage = await sendMessageWithFetch(text);
-                confirmOptimisticMessage(confirmedMessage);
-                fetchNewMessages();
-            } catch (fallbackError) {
-                removeRenderedMessage(pendingMessageId);
-                pendingMessageId = null;
-                console.warn(fallbackError.message || error.message || "Message could not be sent.");
-                messageInput.value = text;
-            }
+            removeRenderedMessage(pendingMessageId);
+            pendingMessageId = null;
+            console.warn(error.message || "Message could not be sent.");
+            messageInput.value = text;
+        } finally {
+            isSendingMessage = false;
         }
-    });
+    };
 
     messageInput.addEventListener("input", function() {
         if (!socket || !socket.connected) {

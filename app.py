@@ -1823,6 +1823,7 @@ def send_message_fallback(conversation_id):
         flash("Conversation not found.", "danger")
         return redirect(url_for("chat_list"))
 
+    socket_log("MESSAGE RECEIVED (backend)", source="http", user_id=current_id, conversation_id=conversation_id)
     result = db.execute(
         """
         INSERT INTO messages (conversation_id, sender_id, message_text)
@@ -1832,6 +1833,7 @@ def send_message_fallback(conversation_id):
     )
     message_id = result.lastrowid
     db.commit()
+    socket_log("MESSAGE SAVED (backend)", source="http", user_id=current_id, conversation_id=conversation_id, message_id=message_id)
 
     message = db.execute(
         """
@@ -1846,7 +1848,7 @@ def send_message_fallback(conversation_id):
     room = chat_room_name_for_conversation(conversation)
     socketio.emit("new_message", payload, room=room)
     socketio.sleep(0)
-    socket_log("http new_message emitted", user_id=current_id, conversation_id=conversation_id, message_id=message_id, room=room)
+    socket_log("MESSAGE EMITTED (backend)", source="http", user_id=current_id, conversation_id=conversation_id, message_id=message_id, room=room)
 
     if wants_json:
         return jsonify({"ok": True, "message": payload})
@@ -2273,7 +2275,7 @@ def handle_send_chat_message(data):
     conversation_id = data.get("conversation_id")
     user = socket_user()
     message_text = (data.get("message_text") or "").strip()
-    socket_log("message received from sender", user_id=user["id"] if user else None, conversation_id=conversation_id)
+    socket_log("MESSAGE RECEIVED (backend)", user_id=user["id"] if user else None, conversation_id=conversation_id)
 
     if not conversation_id or not user or not message_text:
         socket_log("send rejected", sid=request.sid, conversation_id=conversation_id)
@@ -2300,6 +2302,7 @@ def handle_send_chat_message(data):
     )
     message_id = cursor.lastrowid
     db.commit()
+    socket_log("MESSAGE SAVED (backend)", user_id=user["id"], conversation_id=conversation_id, message_id=message_id)
     socket_log("database commit completed", user_id=user["id"], conversation_id=conversation_id, message_id=message_id)
 
     message = db.execute(
@@ -2321,7 +2324,7 @@ def handle_send_chat_message(data):
         room=room,
     )
     socketio.sleep(0)
-    socket_log("new_message emitted", user_id=user["id"], conversation_id=conversation_id, message_id=message_id, room=room)
+    socket_log("MESSAGE EMITTED (backend)", user_id=user["id"], conversation_id=conversation_id, message_id=message_id, room=room)
     return {"ok": True, "message": payload}
 
 
