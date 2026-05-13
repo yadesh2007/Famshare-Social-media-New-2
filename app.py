@@ -564,12 +564,19 @@ def message_delivery_status(message, conversation):
 
 
 def chat_message_payload(message, conversation=None):
+    receiver_id = None
+    if conversation:
+        receiver_id = get_other_chat_user_id(conversation, message["sender_id"])
+
     return {
         "conversation_id": int(message["conversation_id"]),
         "sender_id": int(message["sender_id"]),
+        "receiver_id": int(receiver_id) if receiver_id else None,
         "sender_name": message["username"],
         "message_text": message["message_text"],
+        "content": message["message_text"],
         "created_at": message["created_at"],
+        "timestamp": message["created_at"],
         "message_id": int(message["id"]),
         "id": int(message["id"]),
         "status": message_delivery_status(message, conversation) if conversation else "sent",
@@ -1837,9 +1844,9 @@ def send_message_fallback(conversation_id):
     ).fetchone()
     payload = chat_message_payload(message, conversation)
     room = chat_room_name_for_conversation(conversation)
-    socketio.emit("receive_chat_message", payload, room=room)
+    socketio.emit("new_message", payload, room=room)
     socketio.sleep(0)
-    socket_log("http message broadcast", user_id=current_id, conversation_id=conversation_id, message_id=message_id, room=room)
+    socket_log("http new_message emitted", user_id=current_id, conversation_id=conversation_id, message_id=message_id, room=room)
 
     if wants_json:
         return jsonify({"ok": True, "message": payload})
@@ -2309,12 +2316,12 @@ def handle_send_chat_message(data):
     room = chat_room_name_for_conversation(conversation)
 
     socketio.emit(
-        "receive_chat_message",
+        "new_message",
         payload,
         room=room,
     )
     socketio.sleep(0)
-    socket_log("socket emit executed", user_id=user["id"], conversation_id=conversation_id, message_id=message_id, room=room)
+    socket_log("new_message emitted", user_id=user["id"], conversation_id=conversation_id, message_id=message_id, room=room)
     return {"ok": True, "message": payload}
 
 

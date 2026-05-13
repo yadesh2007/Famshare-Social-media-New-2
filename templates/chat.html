@@ -76,6 +76,7 @@
     const presenceDot = document.getElementById("presence-dot");
     const presenceText = document.getElementById("presence-text");
     const renderedMessages = new Set();
+    let pendingMessageId = null;
     let lastMessageId = 0;
     let isPolling = false;
     let typingTimeout = null;
@@ -83,14 +84,14 @@
     let otherUserOnline = presenceStatus ? presenceStatus.dataset.online === "1" : false;
     const socket = typeof io === "undefined"
         ? null
-        : io({
+        : (window.famshareChatSocket || (window.famshareChatSocket = io({
             transports: ["polling"],
             upgrade: false,
             reconnection: true,
             reconnectionAttempts: Infinity,
             reconnectionDelay: 1000,
             timeout: 20000
-        });
+        })));
 
     function chatLog(message, details) {
         const payload = Object.assign({ ts: new Date().toISOString() }, details || {});
@@ -192,11 +193,60 @@
         return temporaryId;
     }
 
+    function confirmOptimisticMessage(data) {
+        const confirmedId = String(data.message_id);
+        if (renderedMessages.has(confirmedId)) {
+            chatLog("confirmed message already rendered", { message_id: data.message_id });
+            return;
+        }
+
+        if (!pendingMessageId) {
+            appendMessage(data);
+            return;
+        }
+
+        const pendingKey = String(pendingMessageId);
+        const row = chatMessages.querySelector('[data-message-id="' + pendingKey + '"]');
+        if (!row) {
+            pendingMessageId = null;
+            appendMessage(data);
+            return;
+        }
+
+        const messageText = row.querySelector(".message-bubble p");
+        const messageTime = row.querySelector(".message-time");
+        const messageStatus = row.querySelector(".message-status");
+        row.dataset.messageId = confirmedId;
+        if (messageText) {
+            messageText.textContent = data.message_text || data.content;
+        }
+        if (messageTime) {
+            messageTime.textContent = data.created_at || data.timestamp;
+        }
+        if (messageStatus) {
+            messageStatus.textContent = " - " + (data.status || "sent");
+        }
+
+        renderedMessages.delete(pendingKey);
+        renderedMessages.add(confirmedId);
+        lastMessageId = Math.max(lastMessageId, Number(data.message_id) || 0);
+        pendingMessageId = null;
+        updateSidebarPreview(data.message_text || data.content);
+        scrollToBottom();
+    }
+
     function appendMessage(data) {
         const messageId = String(data.message_id);
         if (renderedMessages.has(messageId)) {
+            chatLog("duplicate message skipped", { message_id: data.message_id });
             return;
         }
+
+        if (pendingMessageId && Number(data.sender_id) === Number(currentUserId)) {
+            removeRenderedMessage(pendingMessageId);
+            pendingMessageId = null;
+        }
+
         renderedMessages.add(messageId);
         lastMessageId = Math.max(lastMessageId, Number(data.message_id) || 0);
 
@@ -213,7 +263,7 @@
         bubble.className = "message-bubble";
 
         const textNode = document.createElement("p");
-        textNode.textContent = data.message_text;
+        textNode.textContent = data.message_text || data.content;
 
         const timeNode = document.createElement("small");
         const timeText = document.createElement("span");
@@ -232,7 +282,7 @@
         bubble.appendChild(timeNode);
         row.appendChild(bubble);
         chatMessages.appendChild(row);
-        updateSidebarPreview(data.message_text);
+        updateSidebarPreview(data.message_text || data.content);
         scrollToBottom();
 
         if (Number(data.sender_id) !== Number(currentUserId) && socket && socket.connected) {
@@ -337,6 +387,20 @@
     }
 
     if (socket) {
+        socket.off("connect");
+        socket.off("disconnect");
+        socket.off("connect_error");
+        socket.off("chat_joined");
+        socket.off("receive_chat_message");
+        socket.off("new_message");
+        socket.off("user_status");
+        socket.off("typing");
+        socket.off("messages_read");
+        socket.off("chat_error");
+        socket.io.off("reconnect");
+        socket.io.off("reconnect_attempt");
+        socket.io.off("reconnect_error");
+
         socket.on("connect", function() {
             chatLog("socket connected", { id: socket.id, transport: "polling" });
             socket.emit("join_chat", { conversation_id: conversationId });
@@ -386,6 +450,13 @@
             }
         });
 
+        socket.on("new_message", function(data) {
+            if (Number(data.conversation_id) === Number(conversationId)) {
+                chatLog("new_message received in browser", { message_id: data.message_id });
+                appendMessage(data);
+            }
+        });
+
         socket.on("user_status", function(data) {
             if (Number(data.user_id) === Number(otherUserId)) {
                 chatLog("presence update", data);
@@ -431,25 +502,24 @@
         }
 
         messageInput.value = "";
-        const pendingMessageId = appendOptimisticMessage(text);
+        pendingMessageId = appendOptimisticMessage(text);
         try {
-            let confirmedMessage;
             if (socket && socket.connected) {
-                confirmedMessage = await sendMessageWithSocket(text);
+                const confirmedMessage = await sendMessageWithSocket(text);
+                confirmOptimisticMessage(confirmedMessage);
             } else {
-                confirmedMessage = await sendMessageWithFetch(text);
+                const confirmedMessage = await sendMessageWithFetch(text);
+                confirmOptimisticMessage(confirmedMessage);
                 fetchNewMessages();
             }
-            removeRenderedMessage(pendingMessageId);
-            appendMessage(confirmedMessage);
         } catch (error) {
             try {
                 const confirmedMessage = await sendMessageWithFetch(text);
-                removeRenderedMessage(pendingMessageId);
-                appendMessage(confirmedMessage);
+                confirmOptimisticMessage(confirmedMessage);
                 fetchNewMessages();
             } catch (fallbackError) {
                 removeRenderedMessage(pendingMessageId);
+                pendingMessageId = null;
                 console.warn(fallbackError.message || error.message || "Message could not be sent.");
                 messageInput.value = text;
             }
