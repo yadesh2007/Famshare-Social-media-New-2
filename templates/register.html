@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="card form-card">
+<div class="form-card">
     <h2>Register</h2>
     <form method="POST">
         <label>Username</label>
@@ -9,16 +9,14 @@
         <label>Email</label>
         <input type="email" name="email" required>
 
-        <label>Mobile Number</label>
-        <input type="tel" name="phone_number" required>
-
-        <label>Optional Emergency Number</label>
-        <input type="tel" name="optional_phone_number" placeholder="Family or backup contact">
-
         <label>Password</label>
-        <input type="password" name="password" required>
+        <input type="password" name="password" required minlength="6">
 
         <button type="submit" class="btn">Register</button>
     </form>
+
+    <p class="auth-alt-action">
+        Already have an account? <a href="{{ url_for('login') }}">Login</a>
+    </p>
 </div>
 {% endblock %}

@@ -21,6 +21,7 @@ from utils.helpers import current_user, is_following
 app = Flask(__name__)
 app.config.from_object(Config)
 SESSION_TIMEOUT = timedelta(minutes=30)
+CHAT_ONLY_MODE = os.getenv("CHAT_ONLY_MODE", "1") != "0"
 app.permanent_session_lifetime = SESSION_TIMEOUT
 app.teardown_appcontext(close_db)
 
@@ -65,7 +66,7 @@ def is_safe_redirect_url(target):
     )
 
 
-def get_login_redirect_target(default_endpoint="feed"):
+def get_login_redirect_target(default_endpoint="chat_list"):
     next_url = request.args.get("next") or request.form.get("next")
     if is_safe_redirect_url(next_url):
         return next_url
@@ -127,6 +128,18 @@ CHAT_ENDPOINTS = {
     "start_chat",
     "chat_room",
     "send_message_fallback",
+    "edit_message",
+    "delete_message",
+    "forward_message",
+}
+
+CHAT_ONLY_ENDPOINTS = {
+    "static",
+    "index",
+    "register",
+    "login",
+    "logout",
+    *CHAT_ENDPOINTS,
 }
 
 
@@ -212,6 +225,47 @@ def ensure_database_columns():
         ensure_column("users", "optional_phone_number", "TEXT DEFAULT ''")
     if table_exists("emergency_alerts"):
         ensure_column("emergency_alerts", "optional_contact_number", "TEXT DEFAULT ''")
+
+
+def ensure_chat_schema():
+    db = get_db()
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            phone_number TEXT NOT NULL DEFAULT '',
+            optional_phone_number TEXT DEFAULT '',
+            password_hash TEXT NOT NULL,
+            bio TEXT DEFAULT '',
+            profile_pic TEXT DEFAULT 'default.png',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user1_id INTEGER NOT NULL,
+            user2_id INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user1_id, user2_id),
+            FOREIGN KEY (user1_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (user2_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id INTEGER NOT NULL,
+            sender_id INTEGER NOT NULL,
+            message_text TEXT NOT NULL,
+            is_read INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+            FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        """
+    )
+    db.commit()
 
 
 def is_valid_phone_number(phone_number, required=True):
@@ -327,11 +381,13 @@ def inject_globals():
 
 @app.before_request
 def ensure_database_ready():
+    if app.config.get("_CHAT_SCHEMA_READY"):
+        return
+
     try:
-        if not table_exists("users"):
-            init_db()
-        ensure_emergency_tables()
+        ensure_chat_schema()
         ensure_database_columns()
+        app.config["_CHAT_SCHEMA_READY"] = True
     except Exception as e:
         print("Database init error:", e)
 
@@ -384,6 +440,18 @@ def require_login_for_chat_pages():
     if request.endpoint in CHAT_ENDPOINTS and not g.current_user:
         flash("Please login first to use messages.", "warning")
         return redirect(url_for("login", next=request.full_path.rstrip("?")))
+
+
+@app.before_request
+def redirect_non_chat_pages():
+    if (
+        CHAT_ONLY_MODE
+        and request.endpoint
+        and request.endpoint not in CHAT_ONLY_ENDPOINTS
+    ):
+        if g.current_user:
+            return redirect(url_for("chat_list"))
+        return redirect(url_for("login"))
 
 
 def get_or_create_conversation(user_a, user_b):
@@ -484,8 +552,8 @@ def initdb_route():
 @app.route("/")
 def index():
     if g.current_user:
-        return redirect(url_for("feed"))
-    return render_template("index.html")
+        return redirect(url_for("chat_list"))
+    return redirect(url_for("login"))
 
 
 @app.route("/feed")
@@ -712,7 +780,7 @@ def story_views_page(story_id):
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if g.current_user:
-        return redirect(url_for("feed"))
+        return redirect(url_for("chat_list"))
 
     if request.method == "POST":
         username = request.form.get("username", "").strip()
@@ -721,11 +789,11 @@ def register():
         optional_phone_number = request.form.get("optional_phone_number", "").strip()
         password = request.form.get("password", "")
 
-        if not username or not email or not phone_number or not password:
+        if not username or not email or not password:
             flash("All fields are required.", "danger")
             return redirect(url_for("register"))
 
-        if not is_valid_phone_number(phone_number):
+        if phone_number and not is_valid_phone_number(phone_number, required=False):
             flash("Please enter a valid mobile number.", "danger")
             return redirect(url_for("register"))
 
@@ -767,7 +835,7 @@ def register():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if g.current_user:
-        return redirect(get_login_redirect_target("feed"))
+        return redirect(get_login_redirect_target("chat_list"))
 
     if request.method == "POST":
         username = request.form.get("username", "").strip()
@@ -787,7 +855,7 @@ def login():
         if user and password_matches(user["password_hash"], password):
             login_user_session(user)
             flash("Login successful.", "success")
-            return redirect(get_login_redirect_target("feed"))
+            return redirect(get_login_redirect_target("chat_list"))
 
         flash("Invalid username or password.", "danger")
         return redirect(url_for("login", next=safe_login_next_value()))
@@ -2069,4 +2137,10 @@ def admin_delete_post(post_id):
 
 
 if __name__ == "__main__":
-    socketio.run(app, host="0.0.0.0", port=5000, debug=True)
+    socketio.run(
+        app,
+        host="0.0.0.0",
+        port=5000,
+        debug=os.getenv("FLASK_DEBUG") == "1",
+        allow_unsafe_werkzeug=True,
+    )

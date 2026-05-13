@@ -1,27 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
-<h2 class="page-title">All Users</h2>
-
-<div class="user-grid">
+<h2>All Users</h2>
+{% if users %}
+<ul class="user-list">
     {% for user in users %}
-        <div class="card user-card">
-            <img class="profile-pic-small" src="{{ profile_image_url(user.profile_pic) }}" alt="profile">
-            <h3>{{ user.username }}</h3>
-            <p>{{ user.email }}</p>
-            <p>{{ user.bio or "No bio" }}</p>
-            <p><strong>{{ user.post_count }}</strong> Posts</p>
-            <div class="user-card-actions">
-                <a class="btn small-btn" href="{{ url_for('profile', user_id=user.id) }}">View Profile</a>
-                {% if session.get('user_id') and session.get('user_id') != user.id %}
-                    <form method="POST" action="{{ url_for('follow_user', user_id=user.id) }}">
-                        <input type="hidden" name="next" value="{{ request.full_path }}">
-                        <button type="submit" class="btn small-btn">
-                            {% if user.id in following_ids %}Unfollow{% else %}Follow{% endif %}
-                        </button>
-                    </form>
-                {% endif %}
-            </div>
-        </div>
+    <li><a href="{{ url_for('start_chat', user_id=user.id) }}">{{ user.username }}</a></li>
     {% endfor %}
-</div>
+</ul>
+{% else %}
+<p>No other users are available yet.</p>
+{% endif %}
 {% endblock %}
