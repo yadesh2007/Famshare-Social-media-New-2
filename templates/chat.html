@@ -61,6 +61,25 @@
     </section>
 </div>
 
+<div id="message-action-menu" class="message-action-popup" aria-hidden="true">
+    <button class="message-action" type="button" data-action="copy">
+        <span class="message-action-symbol">C</span>
+        <span>Copy</span>
+    </button>
+    <button class="message-action own-message-action" type="button" data-action="edit">
+        <span class="message-action-symbol">E</span>
+        <span>Edit</span>
+    </button>
+    <button class="message-action" type="button" data-action="forward">
+        <span class="message-action-symbol">F</span>
+        <span>Forward</span>
+    </button>
+    <button class="message-action own-message-action danger-action" type="button" data-action="delete">
+        <span class="message-action-symbol">D</span>
+        <span>Delete</span>
+    </button>
+</div>
+
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script>
     const conversationId = {{ conversation_id }};
@@ -72,6 +91,7 @@
     const chatMessages = document.getElementById("chat-messages");
     const chatForm = document.getElementById("chat-form");
     const messageInput = document.getElementById("message-input");
+    const actionMenu = document.getElementById("message-action-menu");
     const presenceStatus = document.getElementById("presence-status");
     const presenceDot = document.getElementById("presence-dot");
     const presenceText = document.getElementById("presence-text");
@@ -81,6 +101,9 @@
     let isPolling = false;
     let typingTimeout = null;
     let remoteTypingTimeout = null;
+    let longPressTimer = null;
+    let menuOpenedAt = 0;
+    let selectedMessageRow = null;
     let otherUserOnline = presenceStatus ? presenceStatus.dataset.online === "1" : false;
     const socket = typeof io === "undefined"
         ? null
@@ -107,6 +130,11 @@
         if (messageId) {
             renderedMessages.add(String(messageId));
             lastMessageId = Math.max(lastMessageId, messageId);
+        }
+        bindMessageMenu(row);
+        const timeNode = row.querySelector(".message-time");
+        if (timeNode) {
+            timeNode.textContent = formatMessageTime(timeNode.textContent);
         }
     });
 
@@ -157,6 +185,12 @@
         });
     }
 
+    function formatMessageTime(value) {
+        const parsed = value ? new Date(String(value).replace(" ", "T")) : new Date();
+        const date = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+        return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    }
+
     function currentTimestamp() {
         const now = new Date();
         const pad = function(value) {
@@ -168,6 +202,220 @@
             + " " + pad(now.getHours())
             + ":" + pad(now.getMinutes())
             + ":" + pad(now.getSeconds());
+    }
+
+    function getMessageText(row) {
+        const textNode = row ? row.querySelector(".message-bubble p") : null;
+        return textNode ? textNode.textContent : "";
+    }
+
+    function closeMessageMenu() {
+        if (!actionMenu) {
+            return;
+        }
+        actionMenu.classList.remove("show-action-popup");
+        actionMenu.setAttribute("aria-hidden", "true");
+        if (selectedMessageRow) {
+            selectedMessageRow.classList.remove("action-selected");
+        }
+        selectedMessageRow = null;
+    }
+
+    function showMessageMenu(row, clientX, clientY) {
+        if (!actionMenu || !row) {
+            return;
+        }
+
+        closeMessageMenu();
+        selectedMessageRow = row;
+        row.classList.add("action-selected");
+
+        const isOwnMessage = row.classList.contains("sent");
+        actionMenu.querySelectorAll(".own-message-action").forEach(function(button) {
+            button.hidden = !isOwnMessage;
+        });
+
+        actionMenu.classList.add("show-action-popup");
+        actionMenu.setAttribute("aria-hidden", "false");
+        menuOpenedAt = Date.now();
+
+        const menuRect = actionMenu.getBoundingClientRect();
+        const left = Math.min(Math.max(clientX, 12), window.innerWidth - menuRect.width - 12);
+        const top = Math.min(Math.max(clientY, 12), window.innerHeight - menuRect.height - 12);
+        actionMenu.style.left = left + "px";
+        actionMenu.style.top = top + "px";
+    }
+
+    function getForwardTargetConversationId() {
+        const options = Array.from(document.querySelectorAll(".chat-convo-item"))
+            .filter(function(item) {
+                return !item.classList.contains("active-chat");
+            })
+            .map(function(item) {
+                const nameNode = item.querySelector("strong");
+                const href = item.getAttribute("href") || "";
+                const match = href.match(/\/chat\/(\d+)/);
+                return {
+                    id: match ? match[1] : "",
+                    name: nameNode ? nameNode.textContent.trim() : "Chat"
+                };
+            })
+            .filter(function(item) {
+                return item.id;
+            });
+
+        if (!options.length) {
+            alert("No other chats available to forward to.");
+            return "";
+        }
+
+        return prompt(
+            "Forward to conversation ID:\n" + options.map(function(item) {
+                return item.id + " - " + item.name;
+            }).join("\n")
+        );
+    }
+
+    async function handleMessageAction(action) {
+        if (!selectedMessageRow) {
+            return;
+        }
+
+        const row = selectedMessageRow;
+        const messageId = row.dataset.messageId;
+        const text = getMessageText(row);
+        const isOwnMessage = row.classList.contains("sent");
+        closeMessageMenu();
+
+        if (action === "copy") {
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(text);
+            } else {
+                const tempInput = document.createElement("textarea");
+                tempInput.value = text;
+                tempInput.style.position = "fixed";
+                tempInput.style.opacity = "0";
+                document.body.appendChild(tempInput);
+                tempInput.select();
+                document.execCommand("copy");
+                tempInput.remove();
+            }
+            return;
+        }
+
+        if (action === "edit") {
+            if (!isOwnMessage) {
+                return;
+            }
+            const nextText = prompt("Edit message", text);
+            if (!nextText || nextText.trim() === text.trim()) {
+                return;
+            }
+            const response = await fetch("/message/" + encodeURIComponent(messageId) + "/edit", {
+                method: "POST",
+                headers: {
+                    "Accept": "application/json",
+                    "Content-Type": "application/json"
+                },
+                credentials: "same-origin",
+                body: JSON.stringify({ message_text: nextText.trim() })
+            });
+            const data = await response.json();
+            if (response.ok && data.ok) {
+                const textNode = row.querySelector(".message-bubble p");
+                if (textNode) {
+                    textNode.textContent = data.message_text;
+                }
+            }
+            return;
+        }
+
+        if (action === "forward") {
+            const targetConversationId = getForwardTargetConversationId();
+            if (!targetConversationId) {
+                return;
+            }
+            await fetch("/message/" + encodeURIComponent(messageId) + "/forward", {
+                method: "POST",
+                headers: {
+                    "Accept": "application/json",
+                    "Content-Type": "application/json"
+                },
+                credentials: "same-origin",
+                body: JSON.stringify({ conversation_id: targetConversationId })
+            });
+            return;
+        }
+
+        if (action === "delete" && isOwnMessage) {
+            if (!confirm("Delete this message?")) {
+                return;
+            }
+            const response = await fetch("/message/" + encodeURIComponent(messageId) + "/delete", {
+                method: "POST",
+                headers: { "Accept": "application/json" },
+                credentials: "same-origin"
+            });
+            const data = await response.json();
+            if (response.ok && data.ok) {
+                removeRenderedMessage(messageId);
+            }
+        }
+    }
+
+    if (actionMenu) {
+        actionMenu.addEventListener("click", function(event) {
+            const button = event.target.closest("[data-action]");
+            if (!button) {
+                return;
+            }
+            handleMessageAction(button.dataset.action).catch(function(error) {
+                console.warn(error.message || "Message action failed.");
+            });
+        });
+    }
+
+    document.addEventListener("click", function(event) {
+        if (!actionMenu || !actionMenu.classList.contains("show-action-popup")) {
+            return;
+        }
+        if (Date.now() - menuOpenedAt < 220) {
+            return;
+        }
+        if (actionMenu.contains(event.target)) {
+            return;
+        }
+        closeMessageMenu();
+    });
+
+    document.addEventListener("keydown", function(event) {
+        if (event.key === "Escape") {
+            closeMessageMenu();
+        }
+    });
+
+    // Long-press opens the message action menu on touch without blocking normal taps.
+    function bindMessageMenu(row) {
+        row.addEventListener("contextmenu", function(event) {
+            event.preventDefault();
+            showMessageMenu(row, event.clientX, event.clientY);
+        });
+
+        row.addEventListener("pointerdown", function(event) {
+            if (event.pointerType === "mouse" && event.button !== 0) {
+                return;
+            }
+            window.clearTimeout(longPressTimer);
+            longPressTimer = window.setTimeout(function() {
+                showMessageMenu(row, event.clientX, event.clientY);
+            }, 600);
+        });
+
+        ["pointerup", "pointercancel", "pointerleave", "pointermove"].forEach(function(eventName) {
+            row.addEventListener(eventName, function() {
+                window.clearTimeout(longPressTimer);
+            });
+        });
     }
 
     function removeRenderedMessage(messageId) {
@@ -221,7 +469,7 @@
             messageText.textContent = data.message_text || data.content;
         }
         if (messageTime) {
-            messageTime.textContent = data.created_at || data.timestamp;
+            messageTime.textContent = formatMessageTime(data.created_at || data.timestamp);
         }
         if (messageStatus) {
             messageStatus.textContent = " - " + (data.status || "sent");
@@ -268,7 +516,7 @@
         const timeNode = document.createElement("small");
         const timeText = document.createElement("span");
         timeText.className = "message-time";
-        timeText.textContent = data.created_at;
+        timeText.textContent = formatMessageTime(data.created_at || data.timestamp);
         timeNode.appendChild(timeText);
 
         if (Number(data.sender_id) === Number(currentUserId)) {
@@ -281,6 +529,7 @@
         bubble.appendChild(textNode);
         bubble.appendChild(timeNode);
         row.appendChild(bubble);
+        bindMessageMenu(row);
         chatMessages.appendChild(row);
         updateSidebarPreview(data.message_text || data.content);
         scrollToBottom();

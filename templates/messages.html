@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Messages</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/messages.css') }}">
+</head>
+<body>
+    <div class="dm-app">
+        <header class="dm-header" aria-label="Messages header">
+            <div class="dm-title-row">
+                <button class="icon-btn ghost-btn" type="button" aria-label="Account status">
+                    <span class="status-dot" aria-hidden="true"></span>
+                </button>
+
+                <button class="account-switcher" type="button" aria-label="Switch account">
+                    <span>{{ current_user.username if current_user else "_yadx__003" }}</span>
+                    <i data-lucide="chevron-down" aria-hidden="true"></i>
+                </button>
+
+                <button class="icon-btn compose-btn" type="button" aria-label="New message">
+                    <i data-lucide="square-pen" aria-hidden="true"></i>
+                </button>
+            </div>
+
+            <label class="search-shell" for="dm-search">
+                <i data-lucide="search" aria-hidden="true"></i>
+                <input id="dm-search" type="search" placeholder="Search or ask Meta AI" autocomplete="off">
+            </label>
+        </header>
+
+        <main class="dm-content">
+            <section class="notes-carousel" aria-label="Notes and stories">
+                <article class="note-item reveal-item" tabindex="0">
+                    <div class="note-card location-note">
+                        <i data-lucide="map-pin-off" aria-hidden="true"></i>
+                        <span>Location off</span>
+                    </div>
+                    <div class="note-avatar-wrap">
+                        <img
+                            class="note-avatar"
+                            src="{{ url_for('static', filename='img/default-avatar.svg') }}"
+                            alt="Your avatar"
+                            loading="lazy"
+                        >
+                    </div>
+                    <span class="note-name">Your note</span>
+                </article>
+
+                {% for note in notes %}
+                <article class="note-item reveal-item" tabindex="0">
+                    <div class="note-card">
+                        <span class="song-title">{{ note.song_title }}</span>
+                        <span class="song-artist">{{ note.artist }}</span>
+                        {% if note.heart %}
+                        <span class="note-heart" aria-label="Loved">♡</span>
+                        {% endif %}
+                    </div>
+                    <div class="note-avatar-wrap">
+                        <img
+                            class="note-avatar"
+                            src="{{ note.avatar }}"
+                            alt="{{ note.username }} avatar"
+                            loading="lazy"
+                        >
+                    </div>
+                    <span class="note-name">{{ note.username }}</span>
+                </article>
+                {% endfor %}
+            </section>
+
+            <section class="messages-panel" aria-label="Conversation inbox">
+                <div class="section-heading">
+                    <h1>Messages</h1>
+                    <a href="#" aria-label="{{ requests_count or 0 }} message requests">
+                        Requests{% if requests_count %} {{ requests_count }}{% endif %}
+                    </a>
+                </div>
+
+                <div class="conversation-list">
+                    {% for convo in conversations %}
+                    <article class="conversation-item reveal-item {% if convo.unread %}is-unread{% endif %}" tabindex="0">
+                        <div class="avatar-frame {% if convo.unread %}unread-ring{% endif %}">
+                            <img
+                                class="conversation-avatar"
+                                src="{{ convo.avatar }}"
+                                alt="{{ convo.username }} avatar"
+                                loading="lazy"
+                            >
+                            {% if convo.online %}
+                            <span class="online-dot" aria-label="Online"></span>
+                            {% endif %}
+                        </div>
+
+                        <div class="conversation-copy">
+                            <div class="conversation-name-row">
+                                <strong>{{ convo.username }}</strong>
+                                {% if convo.verified %}
+                                <span class="verified-badge" aria-label="Verified">
+                                    <i data-lucide="badge-check" aria-hidden="true"></i>
+                                </span>
+                                {% endif %}
+                            </div>
+                            <p>
+                                {% if convo.reaction %}
+                                <span class="reaction-preview">{{ convo.reaction }}</span>
+                                {% endif %}
+                                {{ convo.last_message }}
+                                <span class="time-dot">·</span>
+                                {{ convo.timestamp }}
+                            </p>
+                        </div>
+
+                        <button class="camera-btn" type="button" aria-label="Open camera for {{ convo.username }}">
+                            <i data-lucide="camera" aria-hidden="true"></i>
+                        </button>
+                    </article>
+                    {% else %}
+                    <div class="empty-state reveal-item">
+                        <i data-lucide="message-circle" aria-hidden="true"></i>
+                        <h2>No conversations yet</h2>
+                        <p>Start a chat and your conversations will appear here.</p>
+                    </div>
+                    {% endfor %}
+                </div>
+            </section>
+        </main>
+
+        <nav class="bottom-nav" aria-label="Primary navigation">
+            <a href="#" aria-label="Home"><i data-lucide="home" aria-hidden="true"></i></a>
+            <a href="#" aria-label="Reels"><i data-lucide="clapperboard" aria-hidden="true"></i></a>
+            <a class="active" href="#" aria-label="Messenger"><i data-lucide="send" aria-hidden="true"></i></a>
+            <a href="#" aria-label="Search"><i data-lucide="search" aria-hidden="true"></i></a>
+            <a class="profile-nav" href="#" aria-label="Profile">
+                <img
+                    src="{{ current_user.avatar if current_user and current_user.avatar else url_for('static', filename='img/default-avatar.svg') }}"
+                    alt="Profile"
+                    loading="lazy"
+                >
+                <span class="profile-alert" aria-hidden="true"></span>
+            </a>
+        </nav>
+    </div>
+
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script src="{{ url_for('static', filename='js/messages.js') }}"></script>
+</body>
+</html>

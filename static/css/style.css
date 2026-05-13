@@ -1504,6 +1504,7 @@ textarea {
 
 .message-row {
     display: flex;
+    width: 100%;
     --message-slide-x: 0px;
 }
 
@@ -1517,7 +1518,9 @@ textarea {
 
 .message-bubble {
     position: relative;
-    max-width: 72%;
+    display: inline-block;
+    width: fit-content;
+    max-width: 75%;
     padding: 12px 14px;
     border-radius: 18px;
     box-shadow: var(--shadow);
@@ -1527,6 +1530,12 @@ textarea {
     user-select: none;
     -webkit-user-select: none;
     -webkit-touch-callout: none;
+}
+
+.message-bubble p {
+    margin: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
 }
 
 .message-row.message-sliding .message-bubble {
@@ -1553,19 +1562,18 @@ body.dark-mode .message-row.received .message-bubble {
 
 .message-bubble small {
     display: block;
-    max-height: 0;
-    margin-top: 0;
-    opacity: 0;
-    overflow: hidden;
+    max-height: none;
+    margin-top: 6px;
+    opacity: 0.78;
+    overflow: visible;
     font-size: 11px;
     line-height: 1.4;
+    text-align: right;
     transition: opacity 0.18s ease, max-height 0.18s ease, margin-top 0.18s ease;
 }
 
 .message-row.show-message-time .message-bubble small {
-    max-height: 18px;
-    margin-top: 6px;
-    opacity: 0.8;
+    opacity: 0.9;
 }
 
 .message-row.action-selected .message-bubble {
@@ -1608,23 +1616,37 @@ body.dark-mode .message-row.received .message-bubble {
     border-radius: 999px;
 }
 
+.message-action-popup {
+    min-width: 150px;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 2px;
+    padding: 7px;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    backdrop-filter: blur(16px);
+}
+
 .message-action {
     border: none;
     border-radius: 9px;
-    padding: 7px 9px;
-    background: rgba(255,255,255,0.1);
+    padding: 10px 12px;
+    background: transparent;
     color: inherit;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
+    justify-content: flex-start;
     gap: 6px;
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 800;
+    text-align: left;
     white-space: nowrap;
 }
 
 .message-action:hover {
-    background: rgba(255,255,255,0.2);
+    background: rgba(255,255,255,0.14);
 }
 
 .message-action-symbol {
