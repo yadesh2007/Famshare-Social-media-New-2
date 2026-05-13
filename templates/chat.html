@@ -88,15 +88,16 @@
             upgrade: false,
             reconnection: true,
             reconnectionAttempts: Infinity,
-            reconnectionDelay: 600,
-            reconnectionDelayMax: 3000
+            reconnectionDelay: 1000,
+            timeout: 20000
         });
 
     function chatLog(message, details) {
+        const payload = Object.assign({ ts: new Date().toISOString() }, details || {});
         if (details) {
-            console.info("[chat]", message, details);
+            console.info("[chat]", message, payload);
         } else {
-            console.info("[chat]", message);
+            console.info("[chat]", message, payload);
         }
     }
 
@@ -153,6 +154,42 @@
                 statusNode.textContent = " - " + status;
             }
         });
+    }
+
+    function currentTimestamp() {
+        const now = new Date();
+        const pad = function(value) {
+            return String(value).padStart(2, "0");
+        };
+        return now.getFullYear()
+            + "-" + pad(now.getMonth() + 1)
+            + "-" + pad(now.getDate())
+            + " " + pad(now.getHours())
+            + ":" + pad(now.getMinutes())
+            + ":" + pad(now.getSeconds());
+    }
+
+    function removeRenderedMessage(messageId) {
+        const key = String(messageId);
+        const row = chatMessages.querySelector('[data-message-id="' + key + '"]');
+        if (row) {
+            row.remove();
+        }
+        renderedMessages.delete(key);
+    }
+
+    function appendOptimisticMessage(text) {
+        const temporaryId = "pending_" + Date.now();
+        appendMessage({
+            conversation_id: conversationId,
+            sender_id: currentUserId,
+            sender_name: "You",
+            message_text: text,
+            created_at: currentTimestamp(),
+            message_id: temporaryId,
+            status: "sending"
+        });
+        return temporaryId;
     }
 
     function appendMessage(data) {
@@ -256,7 +293,7 @@
         if (!response.ok || !data.ok) {
             throw new Error(data.error || "Message could not be sent.");
         }
-        appendMessage(data.message);
+        return data.message;
     }
 
     function sendMessageWithSocket(text) {
@@ -339,7 +376,12 @@
 
         socket.on("receive_chat_message", function(data) {
             if (Number(data.conversation_id) === Number(conversationId)) {
-                chatLog("received message", { message_id: data.message_id });
+                chatLog(
+                    Number(data.sender_id) === Number(currentUserId)
+                        ? "message received by sender client"
+                        : "message received by recipient client",
+                    { message_id: data.message_id }
+                );
                 appendMessage(data);
             }
         });
@@ -389,19 +431,25 @@
         }
 
         messageInput.value = "";
+        const pendingMessageId = appendOptimisticMessage(text);
         try {
+            let confirmedMessage;
             if (socket && socket.connected) {
-                const sentMessage = await sendMessageWithSocket(text);
-                appendMessage(sentMessage);
+                confirmedMessage = await sendMessageWithSocket(text);
             } else {
-                await sendMessageWithFetch(text);
+                confirmedMessage = await sendMessageWithFetch(text);
                 fetchNewMessages();
             }
+            removeRenderedMessage(pendingMessageId);
+            appendMessage(confirmedMessage);
         } catch (error) {
             try {
-                await sendMessageWithFetch(text);
+                const confirmedMessage = await sendMessageWithFetch(text);
+                removeRenderedMessage(pendingMessageId);
+                appendMessage(confirmedMessage);
                 fetchNewMessages();
             } catch (fallbackError) {
+                removeRenderedMessage(pendingMessageId);
                 console.warn(fallbackError.message || error.message || "Message could not be sent.");
                 messageInput.value = text;
             }

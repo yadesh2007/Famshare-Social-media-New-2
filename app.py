@@ -37,8 +37,8 @@ socketio = SocketIO(
     allow_upgrades=False,
     logger=True,
     engineio_logger=True,
-    ping_interval=25,
-    ping_timeout=60,
+    ping_interval=10,
+    ping_timeout=5,
 )
 online_user_locations = {}
 online_users = {}
@@ -55,6 +55,7 @@ os.makedirs(os.path.join(app.root_path, "instance"), exist_ok=True)
 
 def socket_log(message, **details):
     """Write Socket.IO lifecycle details into PythonAnywhere error logs."""
+    details = {"ts": datetime.now().isoformat(timespec="milliseconds"), **details}
     detail_text = " ".join(f"{key}={value}" for key, value in details.items())
     app.logger.info("[socketio] %s%s", message, f" {detail_text}" if detail_text else "")
 
@@ -1746,7 +1747,7 @@ def chat_room(conversation_id):
                 "reader_id": int(current_id),
                 "message_ids": [int(row["id"]) for row in unread_rows],
             },
-            to=chat_room_name_for_conversation(conversation),
+            room=chat_room_name_for_conversation(conversation),
         )
 
     conversations = db.execute(
@@ -1836,7 +1837,8 @@ def send_message_fallback(conversation_id):
     ).fetchone()
     payload = chat_message_payload(message, conversation)
     room = chat_room_name_for_conversation(conversation)
-    socketio.emit("receive_chat_message", payload, to=room)
+    socketio.emit("receive_chat_message", payload, room=room)
+    socketio.sleep(0)
     socket_log("http message broadcast", user_id=current_id, conversation_id=conversation_id, message_id=message_id, room=room)
 
     if wants_json:
@@ -1894,7 +1896,7 @@ def chat_messages_since(conversation_id):
                     "reader_id": int(current_id),
                     "message_ids": read_message_ids,
                 },
-                to=chat_room_name_for_conversation(conversation),
+                room=chat_room_name_for_conversation(conversation),
             )
 
     return jsonify({
@@ -1938,7 +1940,7 @@ def mark_chat_read(conversation_id):
                 "reader_id": int(current_id),
                 "message_ids": [int(row["id"]) for row in unread_rows],
             },
-            to=chat_room_name_for_conversation(conversation),
+            room=chat_room_name_for_conversation(conversation),
         )
 
     return jsonify({"ok": True})
@@ -2135,7 +2137,7 @@ def handle_join_chat(data):
                 "reader_id": int(user["id"]),
                 "message_ids": [int(row["id"]) for row in unread_rows],
             },
-            to=room,
+            room=room,
         )
         socket_log("read receipt broadcast", user_id=user["id"], conversation_id=conversation_id, count=len(unread_rows), room=room)
 
@@ -2223,7 +2225,7 @@ def handle_mark_chat_read(data):
             "reader_id": int(user["id"]),
             "message_ids": [int(row["id"]) for row in unread_rows],
         },
-        to=chat_room_name_for_conversation(conversation),
+        room=chat_room_name_for_conversation(conversation),
     )
     socket_log("read receipt broadcast", user_id=user["id"], conversation_id=conversation_id, count=len(unread_rows), room=chat_room_name_for_conversation(conversation))
 
@@ -2264,6 +2266,7 @@ def handle_send_chat_message(data):
     conversation_id = data.get("conversation_id")
     user = socket_user()
     message_text = (data.get("message_text") or "").strip()
+    socket_log("message received from sender", user_id=user["id"] if user else None, conversation_id=conversation_id)
 
     if not conversation_id or not user or not message_text:
         socket_log("send rejected", sid=request.sid, conversation_id=conversation_id)
@@ -2290,6 +2293,7 @@ def handle_send_chat_message(data):
     )
     message_id = cursor.lastrowid
     db.commit()
+    socket_log("database commit completed", user_id=user["id"], conversation_id=conversation_id, message_id=message_id)
 
     message = db.execute(
         """
@@ -2304,12 +2308,13 @@ def handle_send_chat_message(data):
     payload = chat_message_payload(message, conversation)
     room = chat_room_name_for_conversation(conversation)
 
-    emit(
+    socketio.emit(
         "receive_chat_message",
         payload,
-        to=room,
+        room=room,
     )
-    socket_log("message broadcast", user_id=user["id"], conversation_id=conversation_id, message_id=message_id, room=room)
+    socketio.sleep(0)
+    socket_log("socket emit executed", user_id=user["id"], conversation_id=conversation_id, message_id=message_id, room=room)
     return {"ok": True, "message": payload}
 
 
