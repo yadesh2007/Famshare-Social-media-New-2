@@ -584,6 +584,7 @@
             );
 
             if (!response.ok) {
+                chatLog("message recovery fetch failed", { status: response.status });
                 return;
             }
 
@@ -592,7 +593,7 @@
                 data.messages.forEach(appendMessage);
             }
         } catch (error) {
-            console.warn("Message refresh failed", error);
+            chatLog("message recovery fetch failed", { message: error.message });
         } finally {
             isPolling = false;
         }
@@ -659,6 +660,15 @@
         });
     }
 
+    function joinCurrentChat() {
+        if (!socket || !socket.connected) {
+            return;
+        }
+        socket.emit("join_chat", { conversation_id: conversationId });
+        socket.emit("mark_chat_read", { conversation_id: conversationId });
+        chatLog("room join requested", { room: chatRoomName, conversation_id: conversationId });
+    }
+
     if (socket) {
         socket.off("connect");
         socket.off("disconnect");
@@ -676,15 +686,13 @@
 
         socket.on("connect", function() {
             chatLog("socket connected", { id: socket.id, transport: "polling" });
-            socket.emit("join_chat", { conversation_id: conversationId });
-            socket.emit("mark_chat_read", { conversation_id: conversationId });
+            joinCurrentChat();
             fetchNewMessages();
         });
 
         socket.io.on("reconnect", function(attempt) {
             chatLog("socket reconnected", { attempt: attempt, id: socket.id });
-            socket.emit("join_chat", { conversation_id: conversationId });
-            socket.emit("mark_chat_read", { conversation_id: conversationId });
+            joinCurrentChat();
             fetchNewMessages();
         });
 
@@ -753,6 +761,11 @@
         socket.on("chat_error", function(data) {
             console.warn(data.message || "Chat error");
         });
+
+        if (socket.connected) {
+            joinCurrentChat();
+            fetchNewMessages();
+        }
     }
 
     chatForm.onsubmit = async function(event) {
@@ -770,8 +783,9 @@
         const clientMessageId = createClientMessageId();
         pendingMessageId = appendOptimisticMessage(text, clientMessageId);
         clearMessageInput();
+        const usedSocket = Boolean(socket && socket.connected);
         try {
-            if (socket && socket.connected) {
+            if (usedSocket) {
                 const confirmedMessage = await sendMessageWithSocket(text, clientMessageId);
                 confirmOptimisticMessage(confirmedMessage);
             } else {
@@ -780,10 +794,14 @@
                 fetchNewMessages();
             }
         } catch (error) {
-            removeRenderedMessage(pendingMessageId);
-            pendingMessageId = null;
             console.warn(error.message || "Message could not be sent.");
-            messageInput.value = text;
+            if (usedSocket) {
+                fetchNewMessages();
+            } else {
+                removeRenderedMessage(pendingMessageId);
+                pendingMessageId = null;
+                messageInput.value = text;
+            }
         } finally {
             isSendingMessage = false;
         }
@@ -809,10 +827,7 @@
     });
     document.addEventListener("visibilitychange", function() {
         if (!document.hidden) {
-            if (socket && socket.connected) {
-                socket.emit("join_chat", { conversation_id: conversationId });
-                socket.emit("mark_chat_read", { conversation_id: conversationId });
-            }
+            joinCurrentChat();
             fetchNewMessages();
         }
     });

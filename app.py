@@ -150,6 +150,8 @@ CHAT_ENDPOINTS = {
     "start_chat",
     "chat_room",
     "send_message_fallback",
+    "chat_messages_since",
+    "mark_chat_read",
     "edit_message",
     "delete_message",
     "forward_message",
