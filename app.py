@@ -3,6 +3,7 @@ import time
 import math
 import re
 import json
+import logging
 import urllib.error
 import urllib.request
 from functools import wraps
@@ -20,13 +21,25 @@ from utils.helpers import current_user, is_following
 
 app = Flask(__name__)
 app.config.from_object(Config)
+logging.basicConfig(level=logging.INFO)
 SESSION_TIMEOUT = timedelta(minutes=30)
 CHAT_ONLY_MODE = os.getenv("CHAT_ONLY_MODE", "1") != "0"
 app.permanent_session_lifetime = SESSION_TIMEOUT
 app.teardown_appcontext(close_db)
 
-# Real-time support
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+# Real-time support. PythonAnywhere's standard WSGI path is safest with
+# threading mode and long-polling only, so WebSocket upgrades are disabled.
+socketio = SocketIO(
+    app,
+    cors_allowed_origins="*",
+    async_mode="threading",
+    transports=["polling"],
+    allow_upgrades=False,
+    logger=True,
+    engineio_logger=True,
+    ping_interval=25,
+    ping_timeout=60,
+)
 online_user_locations = {}
 online_users = {}
 sid_to_user = {}
@@ -38,6 +51,12 @@ COORDINATE_TEXT_PATTERN = re.compile(r"^Lat\s+-?\d+(\.\d+)?,\s+Lng\s+-?\d+(\.\d+
 os.makedirs(app.config["UPLOAD_FOLDER_POSTS"], exist_ok=True)
 os.makedirs(app.config["UPLOAD_FOLDER_PROFILES"], exist_ok=True)
 os.makedirs(os.path.join(app.root_path, "instance"), exist_ok=True)
+
+
+def socket_log(message, **details):
+    """Write Socket.IO lifecycle details into PythonAnywhere error logs."""
+    detail_text = " ".join(f"{key}={value}" for key, value in details.items())
+    app.logger.info("[socketio] %s%s", message, f" {detail_text}" if detail_text else "")
 
 
 def admin_required(view):
@@ -1816,7 +1835,9 @@ def send_message_fallback(conversation_id):
         (message_id,),
     ).fetchone()
     payload = chat_message_payload(message, conversation)
-    socketio.emit("receive_chat_message", payload, to=chat_room_name_for_conversation(conversation))
+    room = chat_room_name_for_conversation(conversation)
+    socketio.emit("receive_chat_message", payload, to=room)
+    socket_log("http message broadcast", user_id=current_id, conversation_id=conversation_id, message_id=message_id, room=room)
 
     if wants_json:
         return jsonify({"ok": True, "message": payload})
@@ -2035,13 +2056,17 @@ def handle_socket_connect():
     """Register presence from the signed-in Flask session for this socket."""
     user = socket_user()
     if not user:
+        socket_log("connect rejected", sid=request.sid)
         return False
 
     user_id = int(user["id"])
     sid_to_user[request.sid] = user_id
     online_users.setdefault(user_id, set()).add(request.sid)
     join_room(f"user_{user_id}")
+    socket_log("connect", user_id=user_id, sid=request.sid, sockets=len(online_users[user_id]))
+    socket_log("join personal room", user_id=user_id, room=f"user_{user_id}", sid=request.sid)
     socketio.emit("user_status", {"user_id": user_id, "online": True})
+    socket_log("status broadcast", user_id=user_id, online=True)
 
 
 @socketio.on("disconnect")
@@ -2049,14 +2074,17 @@ def handle_socket_disconnect():
     """Remove this socket; mark the user offline when their last tab leaves."""
     user_id = sid_to_user.pop(request.sid, None)
     if not user_id:
+        socket_log("disconnect without user", sid=request.sid)
         return
 
     sockets = online_users.get(user_id)
     if sockets:
         sockets.discard(request.sid)
+        socket_log("disconnect", user_id=user_id, sid=request.sid, remaining=len(sockets))
         if not sockets:
             online_users.pop(user_id, None)
             socketio.emit("user_status", {"user_id": user_id, "online": False})
+            socket_log("status broadcast", user_id=user_id, online=False)
 
 
 @socketio.on("join_chat")
@@ -2064,11 +2092,13 @@ def handle_join_chat(data):
     conversation_id = data.get("conversation_id")
     user = socket_user()
     if not conversation_id or not user:
+        socket_log("join_chat rejected", sid=request.sid, conversation_id=conversation_id)
         emit("chat_error", {"message": "Please login again to use chat."})
         return
 
     conversation = get_conversation_for_user(conversation_id, user["id"])
     if not conversation:
+        socket_log("join_chat forbidden", user_id=user["id"], conversation_id=conversation_id, sid=request.sid)
         emit("chat_error", {"message": "You do not have access to this chat."})
         return
 
@@ -2076,6 +2106,8 @@ def handle_join_chat(data):
     other_user_id = get_other_chat_user_id(conversation, user["id"])
     join_room(room)
     join_room(f"user_{user['id']}")
+    socket_log("join chat room", user_id=user["id"], conversation_id=conversation_id, room=room, sid=request.sid)
+    socket_log("join personal room", user_id=user["id"], room=f"user_{user['id']}", sid=request.sid)
 
     db = get_db()
     unread_rows = db.execute(
@@ -2105,6 +2137,7 @@ def handle_join_chat(data):
             },
             to=room,
         )
+        socket_log("read receipt broadcast", user_id=user["id"], conversation_id=conversation_id, count=len(unread_rows), room=room)
 
     emit(
         "chat_joined",
@@ -2115,6 +2148,7 @@ def handle_join_chat(data):
             "other_user_online": is_user_online(other_user_id),
         },
     )
+    socket_log("chat joined ack", user_id=user["id"], conversation_id=conversation_id, other_online=is_user_online(other_user_id))
 
 
 @socketio.on("typing")
@@ -2124,12 +2158,15 @@ def handle_typing(data):
     is_typing = bool(data.get("typing"))
     user = socket_user()
     if not conversation_id or not user:
+        socket_log("typing ignored", sid=request.sid, conversation_id=conversation_id)
         return
 
     conversation = get_conversation_for_user(conversation_id, user["id"])
     if not conversation:
+        socket_log("typing forbidden", user_id=user["id"], conversation_id=conversation_id, sid=request.sid)
         return
 
+    room = chat_room_name_for_conversation(conversation)
     emit(
         "typing",
         {
@@ -2137,9 +2174,10 @@ def handle_typing(data):
             "user_id": int(user["id"]),
             "typing": is_typing,
         },
-        to=chat_room_name_for_conversation(conversation),
+        to=room,
         include_self=False,
     )
+    socket_log("typing broadcast", user_id=user["id"], conversation_id=conversation_id, typing=is_typing, room=room)
 
 
 @socketio.on("mark_chat_read")
@@ -2148,10 +2186,12 @@ def handle_mark_chat_read(data):
     conversation_id = data.get("conversation_id")
     user = socket_user()
     if not conversation_id or not user:
+        socket_log("mark read ignored", sid=request.sid, conversation_id=conversation_id)
         return
 
     conversation = get_conversation_for_user(conversation_id, user["id"])
     if not conversation:
+        socket_log("mark read forbidden", user_id=user["id"], conversation_id=conversation_id, sid=request.sid)
         return
 
     db = get_db()
@@ -2164,6 +2204,7 @@ def handle_mark_chat_read(data):
         (conversation_id, user["id"]),
     ).fetchall()
     if not unread_rows:
+        socket_log("mark read no-op", user_id=user["id"], conversation_id=conversation_id)
         return
 
     db.execute(
@@ -2184,6 +2225,7 @@ def handle_mark_chat_read(data):
         },
         to=chat_room_name_for_conversation(conversation),
     )
+    socket_log("read receipt broadcast", user_id=user["id"], conversation_id=conversation_id, count=len(unread_rows), room=chat_room_name_for_conversation(conversation))
 
 
 @socketio.on("update_user_location")
@@ -2224,16 +2266,18 @@ def handle_send_chat_message(data):
     message_text = (data.get("message_text") or "").strip()
 
     if not conversation_id or not user or not message_text:
+        socket_log("send rejected", sid=request.sid, conversation_id=conversation_id)
         emit("chat_error", {"message": "Message could not be sent."})
-        return
+        return {"ok": False, "error": "Message could not be sent."}
 
     db = get_db()
 
     # Validate the socket session before saving or broadcasting.
     conversation = get_conversation_for_user(conversation_id, user["id"])
     if not conversation:
+        socket_log("send forbidden", user_id=user["id"], conversation_id=conversation_id, sid=request.sid)
         emit("chat_error", {"message": "You do not have access to this chat."})
-        return
+        return {"ok": False, "error": "You do not have access to this chat."}
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -2265,6 +2309,7 @@ def handle_send_chat_message(data):
         payload,
         to=room,
     )
+    socket_log("message broadcast", user_id=user["id"], conversation_id=conversation_id, message_id=message_id, room=room)
     return {"ok": True, "message": payload}
 
 

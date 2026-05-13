@@ -84,12 +84,21 @@
     const socket = typeof io === "undefined"
         ? null
         : io({
-            transports: ["websocket", "polling"],
+            transports: ["polling"],
+            upgrade: false,
             reconnection: true,
             reconnectionAttempts: Infinity,
             reconnectionDelay: 600,
             reconnectionDelayMax: 3000
         });
+
+    function chatLog(message, details) {
+        if (details) {
+            console.info("[chat]", message, details);
+        } else {
+            console.info("[chat]", message);
+        }
+    }
 
     document.querySelectorAll("[data-message-id]").forEach(function(row) {
         const messageId = Number(row.dataset.messageId);
@@ -231,6 +240,7 @@
     }
 
     async function sendMessageWithFetch(text) {
+        chatLog("sending message with HTTP fallback");
         const response = await fetch(sendUrl, {
             method: "POST",
             headers: {
@@ -256,6 +266,7 @@
                 return;
             }
 
+            chatLog("sending message with Socket.IO", { conversation_id: conversationId });
             let settled = false;
             const timeoutId = window.setTimeout(function() {
                 if (!settled) {
@@ -290,29 +301,52 @@
 
     if (socket) {
         socket.on("connect", function() {
+            chatLog("socket connected", { id: socket.id, transport: "polling" });
             socket.emit("join_chat", { conversation_id: conversationId });
             socket.emit("mark_chat_read", { conversation_id: conversationId });
+            fetchNewMessages();
         });
 
-        socket.on("reconnect", function() {
+        socket.io.on("reconnect", function(attempt) {
+            chatLog("socket reconnected", { attempt: attempt, id: socket.id });
             socket.emit("join_chat", { conversation_id: conversationId });
             socket.emit("mark_chat_read", { conversation_id: conversationId });
+            fetchNewMessages();
+        });
+
+        socket.io.on("reconnect_attempt", function(attempt) {
+            chatLog("socket reconnect attempt", { attempt: attempt });
+        });
+
+        socket.io.on("reconnect_error", function(error) {
+            chatLog("socket reconnect error", { message: error && error.message });
+        });
+
+        socket.on("disconnect", function(reason) {
+            chatLog("socket disconnected", { reason: reason });
+        });
+
+        socket.on("connect_error", function(error) {
+            chatLog("socket connect error", { message: error && error.message });
         });
 
         socket.on("chat_joined", function(data) {
             if (Number(data.conversation_id) === Number(conversationId)) {
+                chatLog("joined chat room", data);
                 updatePresence(data.other_user_online);
             }
         });
 
         socket.on("receive_chat_message", function(data) {
             if (Number(data.conversation_id) === Number(conversationId)) {
+                chatLog("received message", { message_id: data.message_id });
                 appendMessage(data);
             }
         });
 
         socket.on("user_status", function(data) {
             if (Number(data.user_id) === Number(otherUserId)) {
+                chatLog("presence update", data);
                 updatePresence(data.online);
                 if (data.online) {
                     const sentRows = Array.from(chatMessages.querySelectorAll(".message-row.sent[data-message-id]"));
@@ -337,6 +371,7 @@
 
         socket.on("messages_read", function(data) {
             if (Number(data.conversation_id) === Number(conversationId) && Array.isArray(data.message_ids)) {
+                chatLog("messages read", data);
                 updateMessageStatus(data.message_ids, "read");
             }
         });
@@ -386,8 +421,17 @@
     });
 
     window.addEventListener("focus", fetchNewMessages);
+    window.addEventListener("beforeunload", function() {
+        if (socket && socket.connected) {
+            socket.emit("typing", { conversation_id: conversationId, typing: false });
+        }
+    });
     document.addEventListener("visibilitychange", function() {
         if (!document.hidden) {
+            if (socket && socket.connected) {
+                socket.emit("join_chat", { conversation_id: conversationId });
+                socket.emit("mark_chat_read", { conversation_id: conversationId });
+            }
             fetchNewMessages();
         }
     });
