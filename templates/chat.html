@@ -187,7 +187,11 @@
     }
 
     function formatMessageTime(value) {
-        const parsed = value ? new Date(String(value).replace(" ", "T")) : new Date();
+        let timestamp = value ? String(value).trim() : "";
+        if (timestamp && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(timestamp)) {
+            timestamp = timestamp.replace(" ", "T") + "Z";
+        }
+        const parsed = timestamp ? new Date(timestamp) : new Date();
         const date = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
         return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     }
@@ -437,12 +441,15 @@
 
     function appendOptimisticMessage(text, clientMessageId) {
         const temporaryId = "pending_" + clientMessageId;
+        const nowIso = new Date().toISOString();
         appendMessage({
             conversation_id: conversationId,
             sender_id: currentUserId,
             sender_name: "You",
             message_text: text,
             created_at: currentTimestamp(),
+            timestamp: nowIso,
+            timestamp_utc: nowIso,
             message_id: temporaryId,
             client_message_id: clientMessageId,
             status: "sending"
@@ -478,7 +485,7 @@
             messageText.textContent = data.message_text || data.content;
         }
         if (messageTime) {
-            messageTime.textContent = formatMessageTime(data.created_at || data.timestamp);
+            messageTime.textContent = formatMessageTime(data.timestamp_utc || data.timestamp || data.created_at);
         }
         if (messageStatus) {
             messageStatus.textContent = " - " + (data.status || "sent");
@@ -525,7 +532,7 @@
         const timeNode = document.createElement("small");
         const timeText = document.createElement("span");
         timeText.className = "message-time";
-        timeText.textContent = formatMessageTime(data.created_at || data.timestamp);
+        timeText.textContent = formatMessageTime(data.timestamp_utc || data.timestamp || data.created_at);
         timeNode.appendChild(timeText);
 
         if (Number(data.sender_id) === Number(currentUserId)) {

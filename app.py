@@ -7,7 +7,7 @@ import logging
 import urllib.error
 import urllib.request
 from functools import wraps
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse, urljoin, urlencode
 from flask import Flask, render_template, request, redirect, url_for, session, flash, g, jsonify
 from flask_socketio import SocketIO, emit, join_room
@@ -55,7 +55,7 @@ os.makedirs(os.path.join(app.root_path, "instance"), exist_ok=True)
 
 def socket_log(message, **details):
     """Write Socket.IO lifecycle details into PythonAnywhere error logs."""
-    details = {"ts": datetime.now().isoformat(timespec="milliseconds"), **details}
+    details = {"ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"), **details}
     detail_text = " ".join(f"{key}={value}" for key, value in details.items())
     app.logger.info("[socketio] %s%s", message, f" {detail_text}" if detail_text else "")
 
@@ -565,10 +565,30 @@ def message_delivery_status(message, conversation):
     return "sent"
 
 
+def utc_iso_from_db(value):
+    """Treat SQLite timestamp strings as UTC and send an explicit ISO value."""
+    if not value:
+        return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+    text = str(value)
+    try:
+        parsed = datetime.fromisoformat(text.replace(" ", "T").replace("Z", "+00:00"))
+    except ValueError:
+        return text
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    else:
+        parsed = parsed.astimezone(timezone.utc)
+
+    return parsed.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
 def chat_message_payload(message, conversation=None):
     receiver_id = None
     if conversation:
         receiver_id = get_other_chat_user_id(conversation, message["sender_id"])
+    timestamp_utc = utc_iso_from_db(message["created_at"])
 
     return {
         "conversation_id": int(message["conversation_id"]),
@@ -578,7 +598,8 @@ def chat_message_payload(message, conversation=None):
         "message_text": message["message_text"],
         "content": message["message_text"],
         "created_at": message["created_at"],
-        "timestamp": message["created_at"],
+        "timestamp": timestamp_utc,
+        "timestamp_utc": timestamp_utc,
         "message_id": int(message["id"]),
         "id": int(message["id"]),
         "client_message_id": message["client_message_id"] if "client_message_id" in message.keys() else "",
@@ -2083,7 +2104,7 @@ def forward_message(message_id):
     if not target_conversation:
         return jsonify({"ok": False, "error": "Forward chat not found."}), 404
 
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     cursor = db.execute(
         """
         INSERT INTO messages (conversation_id, sender_id, message_text, created_at)
@@ -2351,7 +2372,7 @@ def handle_send_chat_message(data):
             "duplicate": True,
         }
 
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
     cursor = db.execute(
         """
