@@ -26,7 +26,10 @@
             <img class="avatar" src="{{ profile_image_url(other_user.profile_pic) }}" alt="">
             <div>
                 <h3>{{ other_user.username }}</h3>
-                <p class="muted">Private chat</p>
+                <p id="presence-status" class="muted" data-online="{{ '1' if other_user_online else '0' }}">
+                    <span id="presence-dot" class="presence-dot {% if other_user_online %}online{% endif %}" aria-hidden="true"></span>
+                    <span id="presence-text">{{ "Online" if other_user_online else "Offline" }}</span>
+                </p>
             </div>
         </div>
 
@@ -38,7 +41,12 @@
             >
                 <div class="message-bubble">
                     <p>{{ msg.message_text }}</p>
-                    <small>{{ msg.created_at }}</small>
+                    <small>
+                        <span class="message-time">{{ msg.created_at }}</span>
+                        {% if msg.sender_id == current_user_id %}
+                        <span class="message-status"> - {{ msg.status }}</span>
+                        {% endif %}
+                    </small>
                 </div>
             </div>
             {% else %}
@@ -57,17 +65,31 @@
 <script>
     const conversationId = {{ conversation_id }};
     const currentUserId = {{ current_user_id }};
+    const otherUserId = {{ other_user.id }};
+    const chatRoomName = "{{ chat_room_name }}";
     const sendUrl = "{{ url_for('send_message_fallback', conversation_id=conversation_id) }}";
     const messagesUrl = "{{ url_for('chat_messages_since', conversation_id=conversation_id) }}";
     const chatMessages = document.getElementById("chat-messages");
     const chatForm = document.getElementById("chat-form");
     const messageInput = document.getElementById("message-input");
+    const presenceStatus = document.getElementById("presence-status");
+    const presenceDot = document.getElementById("presence-dot");
+    const presenceText = document.getElementById("presence-text");
     const renderedMessages = new Set();
     let lastMessageId = 0;
     let isPolling = false;
+    let typingTimeout = null;
+    let remoteTypingTimeout = null;
+    let otherUserOnline = presenceStatus ? presenceStatus.dataset.online === "1" : false;
     const socket = typeof io === "undefined"
         ? null
-        : io({ transports: ["websocket", "polling"], reconnection: true });
+        : io({
+            transports: ["websocket", "polling"],
+            reconnection: true,
+            reconnectionAttempts: Infinity,
+            reconnectionDelay: 600,
+            reconnectionDelayMax: 3000
+        });
 
     document.querySelectorAll("[data-message-id]").forEach(function(row) {
         const messageId = Number(row.dataset.messageId);
@@ -86,6 +108,42 @@
         if (activeChatPreview) {
             activeChatPreview.textContent = text;
         }
+    }
+
+    function updatePresence(online) {
+        otherUserOnline = Boolean(online);
+        if (!presenceDot || !presenceText || !presenceStatus) {
+            return;
+        }
+
+        presenceStatus.dataset.online = otherUserOnline ? "1" : "0";
+        presenceDot.classList.toggle("online", otherUserOnline);
+        presenceText.textContent = otherUserOnline ? "Online" : "Offline";
+    }
+
+    function showTypingIndicator() {
+        if (!presenceText) {
+            return;
+        }
+
+        presenceText.textContent = "Typing...";
+        window.clearTimeout(remoteTypingTimeout);
+        remoteTypingTimeout = window.setTimeout(function() {
+            updatePresence(otherUserOnline);
+        }, 2500);
+    }
+
+    function updateMessageStatus(messageIds, status) {
+        messageIds.forEach(function(messageId) {
+            const row = chatMessages.querySelector('[data-message-id="' + messageId + '"]');
+            const statusNode = row ? row.querySelector(".message-status") : null;
+            if (statusNode) {
+                if (status === "delivered" && statusNode.textContent.indexOf("read") !== -1) {
+                    return;
+                }
+                statusNode.textContent = " - " + status;
+            }
+        });
     }
 
     function appendMessage(data) {
@@ -112,7 +170,17 @@
         textNode.textContent = data.message_text;
 
         const timeNode = document.createElement("small");
-        timeNode.textContent = data.created_at;
+        const timeText = document.createElement("span");
+        timeText.className = "message-time";
+        timeText.textContent = data.created_at;
+        timeNode.appendChild(timeText);
+
+        if (Number(data.sender_id) === Number(currentUserId)) {
+            const statusNode = document.createElement("span");
+            statusNode.className = "message-status";
+            statusNode.textContent = " - " + (data.status || "sent");
+            timeNode.appendChild(statusNode);
+        }
 
         bubble.appendChild(textNode);
         bubble.appendChild(timeNode);
@@ -120,6 +188,10 @@
         chatMessages.appendChild(row);
         updateSidebarPreview(data.message_text);
         scrollToBottom();
+
+        if (Number(data.sender_id) !== Number(currentUserId) && socket && socket.connected) {
+            socket.emit("mark_chat_read", { conversation_id: conversationId });
+        }
     }
 
     async function fetchNewMessages() {
@@ -177,14 +249,95 @@
         appendMessage(data.message);
     }
 
+    function sendMessageWithSocket(text) {
+        return new Promise(function(resolve, reject) {
+            if (!socket || !socket.connected) {
+                reject(new Error("Socket is not connected."));
+                return;
+            }
+
+            let settled = false;
+            const timeoutId = window.setTimeout(function() {
+                if (!settled) {
+                    settled = true;
+                    reject(new Error("Socket send timed out."));
+                }
+            }, 3500);
+
+            socket.emit(
+                "send_chat_message",
+                {
+                    conversation_id: conversationId,
+                    room: chatRoomName,
+                    message_text: text
+                },
+                function(response) {
+                    if (settled) {
+                        return;
+                    }
+
+                    settled = true;
+                    window.clearTimeout(timeoutId);
+                    if (!response || !response.ok) {
+                        reject(new Error((response && response.error) || "Message could not be sent."));
+                        return;
+                    }
+                    resolve(response.message);
+                }
+            );
+        });
+    }
+
     if (socket) {
         socket.on("connect", function() {
             socket.emit("join_chat", { conversation_id: conversationId });
+            socket.emit("mark_chat_read", { conversation_id: conversationId });
+        });
+
+        socket.on("reconnect", function() {
+            socket.emit("join_chat", { conversation_id: conversationId });
+            socket.emit("mark_chat_read", { conversation_id: conversationId });
+        });
+
+        socket.on("chat_joined", function(data) {
+            if (Number(data.conversation_id) === Number(conversationId)) {
+                updatePresence(data.other_user_online);
+            }
         });
 
         socket.on("receive_chat_message", function(data) {
             if (Number(data.conversation_id) === Number(conversationId)) {
                 appendMessage(data);
+            }
+        });
+
+        socket.on("user_status", function(data) {
+            if (Number(data.user_id) === Number(otherUserId)) {
+                updatePresence(data.online);
+                if (data.online) {
+                    const sentRows = Array.from(chatMessages.querySelectorAll(".message-row.sent[data-message-id]"));
+                    updateMessageStatus(sentRows.map(function(row) { return row.dataset.messageId; }), "delivered");
+                }
+            }
+        });
+
+        socket.on("typing", function(data) {
+            if (
+                Number(data.conversation_id) === Number(conversationId)
+                && Number(data.user_id) === Number(otherUserId)
+            ) {
+                if (data.typing) {
+                    showTypingIndicator();
+                } else {
+                    window.clearTimeout(remoteTypingTimeout);
+                    updatePresence(otherUserOnline);
+                }
+            }
+        });
+
+        socket.on("messages_read", function(data) {
+            if (Number(data.conversation_id) === Number(conversationId) && Array.isArray(data.message_ids)) {
+                updateMessageStatus(data.message_ids, "read");
             }
         });
 
@@ -202,12 +355,34 @@
 
         messageInput.value = "";
         try {
-            await sendMessageWithFetch(text);
-            fetchNewMessages();
+            if (socket && socket.connected) {
+                const sentMessage = await sendMessageWithSocket(text);
+                appendMessage(sentMessage);
+            } else {
+                await sendMessageWithFetch(text);
+                fetchNewMessages();
+            }
         } catch (error) {
-            console.warn(error.message || "Message could not be sent.");
-            messageInput.value = text;
+            try {
+                await sendMessageWithFetch(text);
+                fetchNewMessages();
+            } catch (fallbackError) {
+                console.warn(fallbackError.message || error.message || "Message could not be sent.");
+                messageInput.value = text;
+            }
         }
+    });
+
+    messageInput.addEventListener("input", function() {
+        if (!socket || !socket.connected) {
+            return;
+        }
+
+        socket.emit("typing", { conversation_id: conversationId, typing: true });
+        window.clearTimeout(typingTimeout);
+        typingTimeout = window.setTimeout(function() {
+            socket.emit("typing", { conversation_id: conversationId, typing: false });
+        }, 1800);
     });
 
     window.addEventListener("focus", fetchNewMessages);

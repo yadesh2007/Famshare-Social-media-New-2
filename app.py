@@ -1,4 +1,4 @@
-import os
+﻿import os
 import time
 import math
 import re
@@ -28,6 +28,8 @@ app.teardown_appcontext(close_db)
 # Real-time support
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 online_user_locations = {}
+online_users = {}
+sid_to_user = {}
 EMERGENCY_RADIUS_KM = 25
 EMERGENCY_COOLDOWN_SECONDS = 180
 PHONE_PATTERN = re.compile(r"^[0-9+\-\s()]{7,20}$")
@@ -506,7 +508,42 @@ def get_conversation_for_user(conversation_id, user_id):
     ).fetchone()
 
 
-def chat_message_payload(message):
+def get_other_chat_user_id(conversation, user_id):
+    """Return the other participant id for a one-to-one conversation."""
+    return (
+        int(conversation["user2_id"])
+        if int(conversation["user1_id"]) == int(user_id)
+        else int(conversation["user1_id"])
+    )
+
+
+def chat_room_name_for_users(user_a, user_b):
+    """Stable private room shared by exactly two user ids."""
+    u1, u2 = sorted([int(user_a), int(user_b)])
+    return f"chat_{u1}_{u2}"
+
+
+def chat_room_name_for_conversation(conversation):
+    return chat_room_name_for_users(conversation["user1_id"], conversation["user2_id"])
+
+
+def is_user_online(user_id):
+    return bool(online_users.get(int(user_id)))
+
+
+def message_delivery_status(message, conversation):
+    """Best-effort status for the sender: sent, delivered, or read."""
+    if message["is_read"]:
+        return "read"
+
+    recipient_id = get_other_chat_user_id(conversation, message["sender_id"])
+    if is_user_online(recipient_id):
+        return "delivered"
+
+    return "sent"
+
+
+def chat_message_payload(message, conversation=None):
     return {
         "conversation_id": int(message["conversation_id"]),
         "sender_id": int(message["sender_id"]),
@@ -514,6 +551,8 @@ def chat_message_payload(message):
         "message_text": message["message_text"],
         "created_at": message["created_at"],
         "message_id": int(message["id"]),
+        "id": int(message["id"]),
+        "status": message_delivery_status(message, conversation) if conversation else "sent",
     }
 
 
@@ -1636,11 +1675,7 @@ def chat_room(conversation_id):
         flash("Conversation not found.", "danger")
         return redirect(url_for("chat_list"))
 
-    other_user_id = (
-        conversation["user2_id"]
-        if conversation["user1_id"] == current_id
-        else conversation["user1_id"]
-    )
+    other_user_id = get_other_chat_user_id(conversation, current_id)
 
     other_user = db.execute(
         """
@@ -1666,6 +1701,15 @@ def chat_room(conversation_id):
         (conversation_id,),
     ).fetchall()
 
+    unread_rows = db.execute(
+        """
+        SELECT id
+        FROM messages
+        WHERE conversation_id = ? AND sender_id != ? AND is_read = 0
+        """,
+        (conversation_id, current_id),
+    ).fetchall()
+
     db.execute(
         """
         UPDATE messages
@@ -1675,6 +1719,16 @@ def chat_room(conversation_id):
         (conversation_id, current_id),
     )
     db.commit()
+    if unread_rows:
+        socketio.emit(
+            "messages_read",
+            {
+                "conversation_id": int(conversation_id),
+                "reader_id": int(current_id),
+                "message_ids": [int(row["id"]) for row in unread_rows],
+            },
+            to=chat_room_name_for_conversation(conversation),
+        )
 
     conversations = db.execute(
         """
@@ -1706,8 +1760,10 @@ def chat_room(conversation_id):
         "chat.html",
         conversation_id=conversation_id,
         current_user_id=current_id,
+        chat_room_name=chat_room_name_for_conversation(conversation),
+        other_user_online=is_user_online(other_user_id),
         other_user=other_user,
-        messages=messages,
+        messages=[chat_message_payload(message, conversation) for message in messages],
         conversations=conversations,
     )
 
@@ -1759,8 +1815,8 @@ def send_message_fallback(conversation_id):
         """,
         (message_id,),
     ).fetchone()
-    payload = chat_message_payload(message)
-    socketio.emit("receive_chat_message", payload, to=f"conversation_{conversation_id}")
+    payload = chat_message_payload(message, conversation)
+    socketio.emit("receive_chat_message", payload, to=chat_room_name_for_conversation(conversation))
 
     if wants_json:
         return jsonify({"ok": True, "message": payload})
@@ -1795,6 +1851,11 @@ def chat_messages_since(conversation_id):
     ).fetchall()
 
     if rows:
+        read_message_ids = [
+            int(row["id"])
+            for row in rows
+            if int(row["sender_id"]) != int(current_id) and not row["is_read"]
+        ]
         db.execute(
             """
             UPDATE messages
@@ -1804,10 +1865,20 @@ def chat_messages_since(conversation_id):
             (conversation_id, current_id),
         )
         db.commit()
+        if read_message_ids:
+            socketio.emit(
+                "messages_read",
+                {
+                    "conversation_id": int(conversation_id),
+                    "reader_id": int(current_id),
+                    "message_ids": read_message_ids,
+                },
+                to=chat_room_name_for_conversation(conversation),
+            )
 
     return jsonify({
         "ok": True,
-        "messages": [chat_message_payload(row) for row in rows],
+        "messages": [chat_message_payload(row, conversation) for row in rows],
     })
 
 
@@ -1821,6 +1892,14 @@ def mark_chat_read(conversation_id):
         return jsonify({"ok": False, "error": "Conversation not found."}), 404
 
     db = get_db()
+    unread_rows = db.execute(
+        """
+        SELECT id
+        FROM messages
+        WHERE conversation_id = ? AND sender_id != ? AND is_read = 0
+        """,
+        (conversation_id, current_id),
+    ).fetchall()
     db.execute(
         """
         UPDATE messages
@@ -1830,6 +1909,16 @@ def mark_chat_read(conversation_id):
         (conversation_id, current_id),
     )
     db.commit()
+    if unread_rows:
+        socketio.emit(
+            "messages_read",
+            {
+                "conversation_id": int(conversation_id),
+                "reader_id": int(current_id),
+                "message_ids": [int(row["id"]) for row in unread_rows],
+            },
+            to=chat_room_name_for_conversation(conversation),
+        )
 
     return jsonify({"ok": True})
 
@@ -1940,6 +2029,36 @@ def forward_message(message_id):
 
 # ---------------- REAL-TIME SOCKET EVENTS ----------------
 
+
+@socketio.on("connect")
+def handle_socket_connect():
+    """Register presence from the signed-in Flask session for this socket."""
+    user = socket_user()
+    if not user:
+        return False
+
+    user_id = int(user["id"])
+    sid_to_user[request.sid] = user_id
+    online_users.setdefault(user_id, set()).add(request.sid)
+    join_room(f"user_{user_id}")
+    socketio.emit("user_status", {"user_id": user_id, "online": True})
+
+
+@socketio.on("disconnect")
+def handle_socket_disconnect():
+    """Remove this socket; mark the user offline when their last tab leaves."""
+    user_id = sid_to_user.pop(request.sid, None)
+    if not user_id:
+        return
+
+    sockets = online_users.get(user_id)
+    if sockets:
+        sockets.discard(request.sid)
+        if not sockets:
+            online_users.pop(user_id, None)
+            socketio.emit("user_status", {"user_id": user_id, "online": False})
+
+
 @socketio.on("join_chat")
 def handle_join_chat(data):
     conversation_id = data.get("conversation_id")
@@ -1953,9 +2072,118 @@ def handle_join_chat(data):
         emit("chat_error", {"message": "You do not have access to this chat."})
         return
 
-    room = f"conversation_{conversation_id}"
+    room = chat_room_name_for_conversation(conversation)
+    other_user_id = get_other_chat_user_id(conversation, user["id"])
     join_room(room)
-    emit("chat_joined", {"conversation_id": int(conversation_id)})
+    join_room(f"user_{user['id']}")
+
+    db = get_db()
+    unread_rows = db.execute(
+        """
+        SELECT id
+        FROM messages
+        WHERE conversation_id = ? AND sender_id != ? AND is_read = 0
+        """,
+        (conversation_id, user["id"]),
+    ).fetchall()
+    if unread_rows:
+        db.execute(
+            """
+            UPDATE messages
+            SET is_read = 1
+            WHERE conversation_id = ? AND sender_id != ?
+            """,
+            (conversation_id, user["id"]),
+        )
+        db.commit()
+        socketio.emit(
+            "messages_read",
+            {
+                "conversation_id": int(conversation_id),
+                "reader_id": int(user["id"]),
+                "message_ids": [int(row["id"]) for row in unread_rows],
+            },
+            to=room,
+        )
+
+    emit(
+        "chat_joined",
+        {
+            "conversation_id": int(conversation_id),
+            "room": room,
+            "other_user_id": int(other_user_id),
+            "other_user_online": is_user_online(other_user_id),
+        },
+    )
+
+
+@socketio.on("typing")
+def handle_typing(data):
+    """Send transient typing state to the other participant in the room."""
+    conversation_id = data.get("conversation_id")
+    is_typing = bool(data.get("typing"))
+    user = socket_user()
+    if not conversation_id or not user:
+        return
+
+    conversation = get_conversation_for_user(conversation_id, user["id"])
+    if not conversation:
+        return
+
+    emit(
+        "typing",
+        {
+            "conversation_id": int(conversation_id),
+            "user_id": int(user["id"]),
+            "typing": is_typing,
+        },
+        to=chat_room_name_for_conversation(conversation),
+        include_self=False,
+    )
+
+
+@socketio.on("mark_chat_read")
+def handle_mark_chat_read(data):
+    """Mark messages read as soon as the recipient is viewing the chat."""
+    conversation_id = data.get("conversation_id")
+    user = socket_user()
+    if not conversation_id or not user:
+        return
+
+    conversation = get_conversation_for_user(conversation_id, user["id"])
+    if not conversation:
+        return
+
+    db = get_db()
+    unread_rows = db.execute(
+        """
+        SELECT id
+        FROM messages
+        WHERE conversation_id = ? AND sender_id != ? AND is_read = 0
+        """,
+        (conversation_id, user["id"]),
+    ).fetchall()
+    if not unread_rows:
+        return
+
+    db.execute(
+        """
+        UPDATE messages
+        SET is_read = 1
+        WHERE conversation_id = ? AND sender_id != ?
+        """,
+        (conversation_id, user["id"]),
+    )
+    db.commit()
+    socketio.emit(
+        "messages_read",
+        {
+            "conversation_id": int(conversation_id),
+            "reader_id": int(user["id"]),
+            "message_ids": [int(row["id"]) for row in unread_rows],
+        },
+        to=chat_room_name_for_conversation(conversation),
+    )
 
 
 @socketio.on("update_user_location")
@@ -2029,13 +2257,15 @@ def handle_send_chat_message(data):
         (message_id,),
     ).fetchone()
 
-    room = f"conversation_{conversation_id}"
+    payload = chat_message_payload(message, conversation)
+    room = chat_room_name_for_conversation(conversation)
 
     emit(
         "receive_chat_message",
-        chat_message_payload(message),
+        payload,
         to=room,
     )
+    return {"ok": True, "message": payload}
 
 
 # ---------------- ADMIN ----------------

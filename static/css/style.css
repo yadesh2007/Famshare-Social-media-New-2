@@ -1468,6 +1468,25 @@ textarea {
     flex: 0 0 auto;
 }
 
+#presence-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.presence-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #94a3b8;
+    box-shadow: 0 0 0 3px rgba(148,163,184,0.14);
+}
+
+.presence-dot.online {
+    background: var(--green);
+    box-shadow: 0 0 0 3px rgba(16,185,129,0.16);
+}
+
 .chat-messages {
     flex: 1;
     display: flex;
