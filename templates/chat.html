@@ -143,6 +143,12 @@
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
+    function clearMessageInput() {
+        messageInput.value = "";
+        messageInput.style.height = "auto";
+        messageInput.focus();
+    }
+
     function updateSidebarPreview(text) {
         const activeChatPreview = document.querySelector(".chat-convo-item.active-chat .muted");
         if (activeChatPreview) {
@@ -762,8 +768,8 @@
 
         isSendingMessage = true;
         const clientMessageId = createClientMessageId();
-        messageInput.value = "";
         pendingMessageId = appendOptimisticMessage(text, clientMessageId);
+        clearMessageInput();
         try {
             if (socket && socket.connected) {
                 const confirmedMessage = await sendMessageWithSocket(text, clientMessageId);
