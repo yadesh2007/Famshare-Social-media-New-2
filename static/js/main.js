@@ -4,6 +4,7 @@ document.addEventListener("DOMContentLoaded", function() {
     const overlay = document.getElementById("sidebar-overlay");
     const themeToggle = document.getElementById("theme-toggle");
     const introStartedAt = Date.now();
+    const introStorageKey = "famshareIntroSeen";
 
     function hideIntroScreen() {
         if (!introScreen) {
@@ -17,6 +18,7 @@ document.addEventListener("DOMContentLoaded", function() {
         window.setTimeout(function() {
             introScreen.classList.add("intro-slide-up");
             document.body.classList.remove("intro-lock");
+            sessionStorage.setItem(introStorageKey, "1");
 
             window.setTimeout(function() {
                 introScreen.remove();
@@ -24,7 +26,10 @@ document.addEventListener("DOMContentLoaded", function() {
         }, delay);
     }
 
-    if (document.readyState === "complete") {
+    if (introScreen && sessionStorage.getItem(introStorageKey) === "1") {
+        introScreen.remove();
+        document.body.classList.remove("intro-lock");
+    } else if (document.readyState === "complete") {
         hideIntroScreen();
     } else {
         window.addEventListener("load", hideIntroScreen, { once: true });

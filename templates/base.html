@@ -6,7 +6,9 @@
     <title>FamShare Chat</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
-<body class="intro-lock" data-current-user-id="{{ current_user_data.id if session.get('user_id') and current_user_data else '' }}">
+{% set show_intro = request.endpoint == "login" and not session.get("user_id") %}
+<body class="{% if show_intro %}intro-lock{% endif %}" data-current-user-id="{{ current_user_data.id if session.get('user_id') and current_user_data else '' }}">
+    {% if show_intro %}
     <div id="intro-screen" role="status" aria-live="polite" aria-label="Loading FamShare Chat">
         <div class="intro-cover"></div>
         <div class="intro-logo-wrap">
@@ -16,6 +18,7 @@
             <div class="intro-loader" aria-hidden="true"></div>
         </div>
     </div>
+    {% endif %}
 
     <div id="main-content" class="{% if session.get('user_id') and current_user_data %}app-shell{% else %}public-shell{% endif %}">
         {% if session.get('user_id') and current_user_data %}

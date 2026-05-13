@@ -129,10 +129,19 @@
 
         isPolling = true;
         try {
-            const response = await fetch(messagesUrl + "?after_id=" + encodeURIComponent(lastMessageId), {
-                headers: { "Accept": "application/json" },
-                credentials: "same-origin"
-            });
+            const response = await fetch(
+                messagesUrl
+                    + "?after_id=" + encodeURIComponent(lastMessageId)
+                    + "&_=" + encodeURIComponent(Date.now()),
+                {
+                    cache: "no-store",
+                    headers: {
+                        "Accept": "application/json",
+                        "Cache-Control": "no-cache"
+                    },
+                    credentials: "same-origin"
+                }
+            );
 
             if (!response.ok) {
                 return;
@@ -193,21 +202,22 @@
 
         messageInput.value = "";
         try {
-            if (socket && socket.connected) {
-                socket.emit("send_chat_message", {
-                    conversation_id: conversationId,
-                    message_text: text
-                });
-            } else {
-                await sendMessageWithFetch(text);
-            }
+            await sendMessageWithFetch(text);
+            fetchNewMessages();
         } catch (error) {
             console.warn(error.message || "Message could not be sent.");
             messageInput.value = text;
         }
     });
 
-    setInterval(fetchNewMessages, 2500);
+    window.addEventListener("focus", fetchNewMessages);
+    document.addEventListener("visibilitychange", function() {
+        if (!document.hidden) {
+            fetchNewMessages();
+        }
+    });
+
+    setInterval(fetchNewMessages, 1000);
     fetchNewMessages();
     scrollToBottom();
 </script>
