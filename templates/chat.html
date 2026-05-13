@@ -205,6 +205,13 @@
             + ":" + pad(now.getSeconds());
     }
 
+    function createClientMessageId() {
+        if (window.crypto && typeof window.crypto.randomUUID === "function") {
+            return window.crypto.randomUUID();
+        }
+        return "msg_" + Date.now() + "_" + Math.random().toString(16).slice(2);
+    }
+
     function getMessageText(row) {
         const textNode = row ? row.querySelector(".message-bubble p") : null;
         return textNode ? textNode.textContent : "";
@@ -428,8 +435,8 @@
         renderedMessages.delete(key);
     }
 
-    function appendOptimisticMessage(text) {
-        const temporaryId = "pending_" + Date.now();
+    function appendOptimisticMessage(text, clientMessageId) {
+        const temporaryId = "pending_" + clientMessageId;
         appendMessage({
             conversation_id: conversationId,
             sender_id: currentUserId,
@@ -437,6 +444,7 @@
             message_text: text,
             created_at: currentTimestamp(),
             message_id: temporaryId,
+            client_message_id: clientMessageId,
             status: "sending"
         });
         return temporaryId;
@@ -577,7 +585,7 @@
         }
     }
 
-    async function sendMessageWithFetch(text) {
+    async function sendMessageWithFetch(text, clientMessageId) {
         chatLog("MESSAGE SENT (frontend)", { transport: "http", conversation_id: conversationId });
         const response = await fetch(sendUrl, {
             method: "POST",
@@ -587,7 +595,7 @@
                 "X-Requested-With": "XMLHttpRequest"
             },
             credentials: "same-origin",
-            body: JSON.stringify({ message_text: text })
+            body: JSON.stringify({ message_text: text, client_message_id: clientMessageId })
         });
 
         const data = await response.json();
@@ -597,7 +605,7 @@
         return data.message;
     }
 
-    function sendMessageWithSocket(text) {
+    function sendMessageWithSocket(text, clientMessageId) {
         return new Promise(function(resolve, reject) {
             if (!socket || !socket.connected) {
                 reject(new Error("Socket is not connected."));
@@ -618,7 +626,8 @@
                 {
                     conversation_id: conversationId,
                     room: chatRoomName,
-                    message_text: text
+                    message_text: text,
+                    client_message_id: clientMessageId
                 },
                 function(response) {
                     if (settled) {
@@ -745,14 +754,15 @@
         }
 
         isSendingMessage = true;
+        const clientMessageId = createClientMessageId();
         messageInput.value = "";
-        pendingMessageId = appendOptimisticMessage(text);
+        pendingMessageId = appendOptimisticMessage(text, clientMessageId);
         try {
             if (socket && socket.connected) {
-                const confirmedMessage = await sendMessageWithSocket(text);
+                const confirmedMessage = await sendMessageWithSocket(text, clientMessageId);
                 confirmOptimisticMessage(confirmedMessage);
             } else {
-                const confirmedMessage = await sendMessageWithFetch(text);
+                const confirmedMessage = await sendMessageWithFetch(text, clientMessageId);
                 confirmOptimisticMessage(confirmedMessage);
                 fetchNewMessages();
             }

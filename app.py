@@ -280,6 +280,7 @@ def ensure_chat_schema():
             conversation_id INTEGER NOT NULL,
             sender_id INTEGER NOT NULL,
             message_text TEXT NOT NULL,
+            client_message_id TEXT DEFAULT '',
             is_read INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
@@ -287,6 +288,7 @@ def ensure_chat_schema():
         );
         """
     )
+    ensure_column("messages", "client_message_id", "TEXT DEFAULT ''")
     db.commit()
 
 
@@ -579,8 +581,42 @@ def chat_message_payload(message, conversation=None):
         "timestamp": message["created_at"],
         "message_id": int(message["id"]),
         "id": int(message["id"]),
+        "client_message_id": message["client_message_id"] if "client_message_id" in message.keys() else "",
         "status": message_delivery_status(message, conversation) if conversation else "sent",
     }
+
+
+def fetch_chat_message(message_id):
+    db = get_db()
+    return db.execute(
+        """
+        SELECT messages.*, users.username
+        FROM messages
+        JOIN users ON messages.sender_id = users.id
+        WHERE messages.id = ?
+        """,
+        (message_id,),
+    ).fetchone()
+
+
+def find_existing_client_message(conversation_id, sender_id, client_message_id):
+    if not client_message_id:
+        return None
+
+    db = get_db()
+    return db.execute(
+        """
+        SELECT messages.*, users.username
+        FROM messages
+        JOIN users ON messages.sender_id = users.id
+        WHERE messages.conversation_id = ?
+          AND messages.sender_id = ?
+          AND messages.client_message_id = ?
+        ORDER BY messages.id DESC
+        LIMIT 1
+        """,
+        (conversation_id, sender_id, client_message_id),
+    ).fetchone()
 
 
 def followed_user_ids(user_id):
@@ -1803,6 +1839,7 @@ def send_message_fallback(conversation_id):
     current_id = session["user_id"]
     data = request.get_json(silent=True) or {}
     message_text = (data.get("message_text") or request.form.get("message_text", "")).strip()
+    client_message_id = (data.get("client_message_id") or request.form.get("client_message_id", "")).strip()
     wants_json = (
         request.headers.get("X-Requested-With") == "XMLHttpRequest"
         or request.is_json
@@ -1824,26 +1861,33 @@ def send_message_fallback(conversation_id):
         return redirect(url_for("chat_list"))
 
     socket_log("MESSAGE RECEIVED (backend)", source="http", user_id=current_id, conversation_id=conversation_id)
+    existing_message = find_existing_client_message(conversation_id, current_id, client_message_id)
+    if existing_message:
+        socket_log(
+            "DUPLICATE SEND SKIPPED (backend)",
+            source="http",
+            user_id=current_id,
+            conversation_id=conversation_id,
+            message_id=existing_message["id"],
+            client_message_id=client_message_id,
+        )
+        payload = chat_message_payload(existing_message, conversation)
+        if wants_json:
+            return jsonify({"ok": True, "message": payload, "duplicate": True})
+        return redirect(url_for("chat_room", conversation_id=conversation_id))
+
     result = db.execute(
         """
-        INSERT INTO messages (conversation_id, sender_id, message_text)
-        VALUES (?, ?, ?)
+        INSERT INTO messages (conversation_id, sender_id, message_text, client_message_id)
+        VALUES (?, ?, ?, ?)
         """,
-        (conversation_id, current_id, message_text),
+        (conversation_id, current_id, message_text, client_message_id),
     )
     message_id = result.lastrowid
     db.commit()
     socket_log("MESSAGE SAVED (backend)", source="http", user_id=current_id, conversation_id=conversation_id, message_id=message_id)
 
-    message = db.execute(
-        """
-        SELECT messages.*, users.username
-        FROM messages
-        JOIN users ON messages.sender_id = users.id
-        WHERE messages.id = ?
-        """,
-        (message_id,),
-    ).fetchone()
+    message = fetch_chat_message(message_id)
     payload = chat_message_payload(message, conversation)
     room = chat_room_name_for_conversation(conversation)
     socketio.emit("new_message", payload, room=room)
@@ -2275,7 +2319,8 @@ def handle_send_chat_message(data):
     conversation_id = data.get("conversation_id")
     user = socket_user()
     message_text = (data.get("message_text") or "").strip()
-    socket_log("MESSAGE RECEIVED (backend)", user_id=user["id"] if user else None, conversation_id=conversation_id)
+    client_message_id = (data.get("client_message_id") or "").strip()
+    socket_log("MESSAGE RECEIVED (backend)", user_id=user["id"] if user else None, conversation_id=conversation_id, client_message_id=client_message_id)
 
     if not conversation_id or not user or not message_text:
         socket_log("send rejected", sid=request.sid, conversation_id=conversation_id)
@@ -2291,29 +2336,36 @@ def handle_send_chat_message(data):
         emit("chat_error", {"message": "You do not have access to this chat."})
         return {"ok": False, "error": "You do not have access to this chat."}
 
+    existing_message = find_existing_client_message(conversation_id, user["id"], client_message_id)
+    if existing_message:
+        socket_log(
+            "DUPLICATE SEND SKIPPED (backend)",
+            user_id=user["id"],
+            conversation_id=conversation_id,
+            message_id=existing_message["id"],
+            client_message_id=client_message_id,
+        )
+        return {
+            "ok": True,
+            "message": chat_message_payload(existing_message, conversation),
+            "duplicate": True,
+        }
+
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     cursor = db.execute(
         """
-        INSERT INTO messages (conversation_id, sender_id, message_text, created_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO messages (conversation_id, sender_id, message_text, created_at, client_message_id)
+        VALUES (?, ?, ?, ?, ?)
         """,
-        (conversation_id, user["id"], message_text, now_str),
+        (conversation_id, user["id"], message_text, now_str, client_message_id),
     )
     message_id = cursor.lastrowid
     db.commit()
     socket_log("MESSAGE SAVED (backend)", user_id=user["id"], conversation_id=conversation_id, message_id=message_id)
     socket_log("database commit completed", user_id=user["id"], conversation_id=conversation_id, message_id=message_id)
 
-    message = db.execute(
-        """
-        SELECT messages.*, users.username
-        FROM messages
-        JOIN users ON messages.sender_id = users.id
-        WHERE messages.id = ?
-        """,
-        (message_id,),
-    ).fetchone()
+    message = fetch_chat_message(message_id)
 
     payload = chat_message_payload(message, conversation)
     room = chat_room_name_for_conversation(conversation)
