@@ -213,11 +213,20 @@ CHAT_ENDPOINTS = {
 CHAT_ONLY_ENDPOINTS = {
     "static",
     "index",
+    "healthz",
     "register",
     "login",
     "logout",
     *CHAT_ENDPOINTS,
 }
+
+STARTUP_SAFE_ENDPOINTS = {"static", "index", "healthz", "logout"}
+
+
+def is_startup_safe_request():
+    return request.endpoint in STARTUP_SAFE_ENDPOINTS or (
+        request.endpoint == "login" and request.method == "GET"
+    )
 
 
 def ensure_emergency_tables():
@@ -462,13 +471,21 @@ def inject_globals():
 def ensure_database_ready():
     if app.config.get("_CHAT_SCHEMA_READY"):
         return
+    if is_startup_safe_request():
+        return
 
     try:
+        started_at = time.perf_counter()
         ensure_chat_schema()
         ensure_database_columns()
         app.config["_CHAT_SCHEMA_READY"] = True
+        app.logger.info(
+            "[startup] lazy database schema ready %.3fs endpoint=%s",
+            time.perf_counter() - started_at,
+            request.endpoint,
+        )
     except Exception as e:
-        print("Database init error:", e)
+        app.logger.exception("Database init error: %s", e)
 
 
 @app.before_request
@@ -743,6 +760,11 @@ def index():
     if g.current_user:
         return redirect(url_for("chat_list"))
     return redirect(url_for("login"))
+
+
+@app.route("/healthz")
+def healthz():
+    return jsonify({"ok": True, "status": "ready"})
 
 
 @app.route("/feed")
