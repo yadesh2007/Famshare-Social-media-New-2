@@ -96,7 +96,7 @@
     const presenceDot = document.getElementById("presence-dot");
     const presenceText = document.getElementById("presence-text");
     const renderedMessages = new Set();
-    let pendingMessageId = null;
+    const pendingMessages = new Map();
     let lastMessageId = 0;
     let isPolling = false;
     let typingTimeout = null;
@@ -104,13 +104,13 @@
     let longPressTimer = null;
     let menuOpenedAt = 0;
     let selectedMessageRow = null;
-    let isSendingMessage = false;
     let otherUserOnline = presenceStatus ? presenceStatus.dataset.online === "1" : false;
+    const socketioOptions = {{ socketio_options|tojson }};
     const socket = typeof io === "undefined"
         ? null
         : (window.famshareChatSocket || (window.famshareChatSocket = io({
-            transports: ["polling"],
-            upgrade: false,
+            transports: socketioOptions.transports || ["polling", "websocket"],
+            upgrade: socketioOptions.upgrade !== false,
             reconnection: true,
             reconnectionAttempts: Infinity,
             reconnectionDelay: 1000,
@@ -448,6 +448,7 @@
     function appendOptimisticMessage(text, clientMessageId) {
         const temporaryId = "pending_" + clientMessageId;
         const nowIso = new Date().toISOString();
+        pendingMessages.set(clientMessageId, temporaryId);
         appendMessage({
             conversation_id: conversationId,
             sender_id: currentUserId,
@@ -465,20 +466,27 @@
 
     function confirmOptimisticMessage(data) {
         const confirmedId = String(data.message_id);
+        const clientMessageId = data.client_message_id ? String(data.client_message_id) : "";
+        const pendingId = clientMessageId ? pendingMessages.get(clientMessageId) : null;
+
         if (renderedMessages.has(confirmedId)) {
+            if (pendingId) {
+                removeRenderedMessage(pendingId);
+                pendingMessages.delete(clientMessageId);
+            }
             chatLog("confirmed message already rendered", { message_id: data.message_id });
             return;
         }
 
-        if (!pendingMessageId) {
+        if (!pendingId) {
             appendMessage(data);
             return;
         }
 
-        const pendingKey = String(pendingMessageId);
+        const pendingKey = String(pendingId);
         const row = chatMessages.querySelector('[data-message-id="' + pendingKey + '"]');
         if (!row) {
-            pendingMessageId = null;
+            pendingMessages.delete(clientMessageId);
             appendMessage(data);
             return;
         }
@@ -500,21 +508,26 @@
         renderedMessages.delete(pendingKey);
         renderedMessages.add(confirmedId);
         lastMessageId = Math.max(lastMessageId, Number(data.message_id) || 0);
-        pendingMessageId = null;
+        pendingMessages.delete(clientMessageId);
         updateSidebarPreview(data.message_text || data.content);
         scrollToBottom();
     }
 
     function appendMessage(data) {
         const messageId = String(data.message_id);
-        if (renderedMessages.has(messageId)) {
-            chatLog("DUPLICATE SKIPPED (frontend)", { message_id: data.message_id });
+        const clientMessageId = data.client_message_id ? String(data.client_message_id) : "";
+        if (
+            clientMessageId
+            && pendingMessages.has(clientMessageId)
+            && Number(data.sender_id) === Number(currentUserId)
+        ) {
+            confirmOptimisticMessage(data);
             return;
         }
 
-        if (pendingMessageId && Number(data.sender_id) === Number(currentUserId)) {
-            removeRenderedMessage(pendingMessageId);
-            pendingMessageId = null;
+        if (renderedMessages.has(messageId)) {
+            chatLog("DUPLICATE SKIPPED (frontend)", { message_id: data.message_id });
+            return;
         }
 
         renderedMessages.add(messageId);
@@ -685,7 +698,12 @@
         socket.io.off("reconnect_error");
 
         socket.on("connect", function() {
-            chatLog("socket connected", { id: socket.id, transport: "polling" });
+            chatLog("socket connected", {
+                id: socket.id,
+                transport: socket.io.engine && socket.io.engine.transport
+                    ? socket.io.engine.transport.name
+                    : "unknown"
+            });
             joinCurrentChat();
             fetchNewMessages();
         });
@@ -770,18 +788,13 @@
 
     chatForm.onsubmit = async function(event) {
         event.preventDefault();
-        if (isSendingMessage) {
-            return;
-        }
-
         const text = messageInput.value.trim();
         if (!text) {
             return;
         }
 
-        isSendingMessage = true;
         const clientMessageId = createClientMessageId();
-        pendingMessageId = appendOptimisticMessage(text, clientMessageId);
+        const optimisticMessageId = appendOptimisticMessage(text, clientMessageId);
         clearMessageInput();
         const usedSocket = Boolean(socket && socket.connected);
         try {
@@ -798,12 +811,11 @@
             if (usedSocket) {
                 fetchNewMessages();
             } else {
-                removeRenderedMessage(pendingMessageId);
-                pendingMessageId = null;
+                removeRenderedMessage(optimisticMessageId);
+                pendingMessages.delete(clientMessageId);
                 messageInput.value = text;
+                messageInput.focus();
             }
-        } finally {
-            isSendingMessage = false;
         }
     };
 

@@ -4,6 +4,7 @@ import math
 import re
 import json
 import logging
+import importlib.util
 import urllib.error
 import urllib.request
 from functools import wraps
@@ -27,19 +28,59 @@ CHAT_ONLY_MODE = os.getenv("CHAT_ONLY_MODE", "1") != "0"
 app.permanent_session_lifetime = SESSION_TIMEOUT
 app.teardown_appcontext(close_db)
 
-# Real-time support. PythonAnywhere's standard WSGI path is safest with
-# threading mode and long-polling only, so WebSocket upgrades are disabled.
-socketio = SocketIO(
-    app,
-    cors_allowed_origins="*",
-    async_mode="threading",
-    transports=["polling"],
-    allow_upgrades=False,
-    logger=True,
-    engineio_logger=True,
-    ping_interval=10,
-    ping_timeout=5,
-)
+def running_on_pythonanywhere():
+    return bool(os.getenv("PYTHONANYWHERE_DOMAIN") or os.getenv("PYTHONANYWHERE_SITE"))
+
+
+def socketio_client_options():
+    transports = SOCKETIO_KWARGS.get("transports")
+    allow_upgrades = SOCKETIO_KWARGS.get("allow_upgrades")
+    return {
+        "transports": transports or ["polling", "websocket"],
+        "upgrade": True if allow_upgrades is None else bool(allow_upgrades),
+    }
+
+
+def choose_socketio_async_mode():
+    configured_mode = os.getenv("SOCKETIO_ASYNC_MODE")
+    if configured_mode:
+        return configured_mode
+    if running_on_pythonanywhere():
+        return "threading"
+    if importlib.util.find_spec("gevent") and importlib.util.find_spec("geventwebsocket"):
+        return "gevent"
+    if importlib.util.find_spec("eventlet"):
+        return "eventlet"
+    return "threading"
+
+
+SOCKETIO_ASYNC_MODE = choose_socketio_async_mode()
+SOCKETIO_TRANSPORTS = os.getenv("SOCKETIO_TRANSPORTS")
+SOCKETIO_ALLOW_UPGRADES = os.getenv("SOCKETIO_ALLOW_UPGRADES")
+SOCKETIO_KWARGS = {
+    "cors_allowed_origins": os.getenv("SOCKETIO_CORS_ALLOWED_ORIGINS", "*"),
+    "logger": os.getenv("SOCKETIO_LOGGER", "0") == "1",
+    "engineio_logger": os.getenv("SOCKETIO_ENGINEIO_LOGGER", "0") == "1",
+    "ping_interval": int(os.getenv("SOCKETIO_PING_INTERVAL", "25")),
+    "ping_timeout": int(os.getenv("SOCKETIO_PING_TIMEOUT", "20")),
+}
+
+if SOCKETIO_ASYNC_MODE:
+    SOCKETIO_KWARGS["async_mode"] = SOCKETIO_ASYNC_MODE
+if SOCKETIO_TRANSPORTS:
+    SOCKETIO_KWARGS["transports"] = [
+        transport.strip()
+        for transport in SOCKETIO_TRANSPORTS.split(",")
+        if transport.strip()
+    ]
+elif running_on_pythonanywhere():
+    SOCKETIO_KWARGS["transports"] = ["polling"]
+if SOCKETIO_ALLOW_UPGRADES is not None:
+    SOCKETIO_KWARGS["allow_upgrades"] = SOCKETIO_ALLOW_UPGRADES == "1"
+elif running_on_pythonanywhere():
+    SOCKETIO_KWARGS["allow_upgrades"] = False
+
+socketio = SocketIO(app, **SOCKETIO_KWARGS)
 online_user_locations = {}
 online_users = {}
 sid_to_user = {}
@@ -1851,6 +1892,7 @@ def chat_room(conversation_id):
         other_user=other_user,
         messages=[chat_message_payload(message, conversation) for message in messages],
         conversations=conversations,
+        socketio_options=socketio_client_options(),
     )
 
 

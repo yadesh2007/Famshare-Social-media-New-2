@@ -6,4 +6,5 @@ Werkzeug
 gunicorn
 gevent
 gevent-websocket
+eventlet
 cryptography
