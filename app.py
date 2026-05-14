@@ -20,9 +20,24 @@ from utils.auth import login_required
 from utils.upload import save_post_media, save_profile_media
 from utils.helpers import current_user, is_following
 
-app = Flask(__name__)
-app.config.from_object(Config)
+STARTUP_STARTED_AT = time.perf_counter()
 logging.basicConfig(level=logging.INFO)
+
+
+def startup_log(message, **details):
+    elapsed = time.perf_counter() - STARTUP_STARTED_AT
+    detail_text = " ".join(f"{key}={value}" for key, value in details.items())
+    logging.getLogger(__name__).info(
+        "[startup] %.3fs %s%s",
+        elapsed,
+        message,
+        f" {detail_text}" if detail_text else "",
+    )
+
+
+app = Flask(__name__)
+startup_log("Flask app created")
+app.config.from_object(Config)
 SESSION_TIMEOUT = timedelta(minutes=30)
 CHAT_ONLY_MODE = os.getenv("CHAT_ONLY_MODE", "1") != "0"
 app.permanent_session_lifetime = SESSION_TIMEOUT
@@ -81,6 +96,7 @@ elif running_on_pythonanywhere():
     SOCKETIO_KWARGS["allow_upgrades"] = False
 
 socketio = SocketIO(app, **SOCKETIO_KWARGS)
+startup_log("Extensions initialized", socketio_async_mode=socketio.async_mode)
 online_user_locations = {}
 online_users = {}
 sid_to_user = {}
@@ -88,10 +104,6 @@ EMERGENCY_RADIUS_KM = 25
 EMERGENCY_COOLDOWN_SECONDS = 180
 PHONE_PATTERN = re.compile(r"^[0-9+\-\s()]{7,20}$")
 COORDINATE_TEXT_PATTERN = re.compile(r"^Lat\s+-?\d+(\.\d+)?,\s+Lng\s+-?\d+(\.\d+)?$", re.IGNORECASE)
-
-os.makedirs(app.config["UPLOAD_FOLDER_POSTS"], exist_ok=True)
-os.makedirs(app.config["UPLOAD_FOLDER_PROFILES"], exist_ok=True)
-os.makedirs(os.path.join(app.root_path, "instance"), exist_ok=True)
 
 
 def socket_log(message, **details):
@@ -2630,6 +2642,10 @@ def admin_delete_post(post_id):
     db.commit()
     flash("Post deleted successfully.", "success")
     return redirect(url_for("admin_posts"))
+
+
+startup_log("Routes registered", route_count=len(list(app.url_map.iter_rules())))
+startup_log("Startup complete")
 
 
 if __name__ == "__main__":

@@ -3,6 +3,13 @@ import uuid
 from werkzeug.utils import secure_filename
 from flask import current_app
 
+
+def ensure_upload_folder(config_key):
+    folder = current_app.config[config_key]
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
 def detect_media_type(filename):
     ext = filename.rsplit(".", 1)[1].lower()
     if ext in current_app.config["ALLOWED_IMAGE_EXTENSIONS"]:
@@ -26,7 +33,7 @@ def save_post_media(file_storage):
         return "", ""
 
     unique_name = f"{uuid.uuid4().hex}.{ext}"
-    save_path = os.path.join(current_app.config["UPLOAD_FOLDER_POSTS"], unique_name)
+    save_path = os.path.join(ensure_upload_folder("UPLOAD_FOLDER_POSTS"), unique_name)
     file_storage.save(save_path)
 
     return unique_name, detect_media_type(unique_name)
@@ -44,6 +51,6 @@ def save_profile_media(file_storage):
         return ""
 
     unique_name = f"{uuid.uuid4().hex}.{ext}"
-    save_path = os.path.join(current_app.config["UPLOAD_FOLDER_PROFILES"], unique_name)
+    save_path = os.path.join(ensure_upload_folder("UPLOAD_FOLDER_PROFILES"), unique_name)
     file_storage.save(save_path)
     return unique_name
